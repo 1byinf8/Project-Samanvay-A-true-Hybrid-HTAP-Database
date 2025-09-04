@@ -1,0 +1,51 @@
+name: Delete Old Branches
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Find and delete branches older than 60 days (except main, develop, staging)
+        id: cleanup
+        run: |
+          now=$(date +%s)
+          report="### Deleted branches report\n\n"
+          report+="Run date: $(date -u)\n\n"
+
+          deleted="false"
+
+          for branch in $(git for-each-ref --format '%(refname:short) %(committerdate:unix)' refs/remotes/origin | grep -v 'origin/main' | grep -v 'origin/develop' | grep -v 'origin/staging'); do
+            bname=$(echo $branch | awk '{print $1}' | sed 's|origin/||')
+            bdate=$(echo $branch | awk '{print $2}')
+
+            age=$(( ($now - $bdate) / 86400 ))
+
+            if [ $age -gt 60 ]; then
+              echo " Deleting old branch: $bname (last commit $age days ago)"
+              git push origin --delete $bname
+              report+="- **$bname** (last commit $age days ago)\n"
+              deleted="true"
+            fi
+          done
+
+          if [ "$deleted" = "false" ]; then
+            report+="No branches deleted \n"
+          fi
+
+          echo "report<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$report" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create or update audit issue
+        uses: peter-evans/create-issue-from-file@v5
+        with:
+          title: "🗑️ Branch Cleanup Report"
+          content-filepath: ./report.md
+          labels: cleanup, automation
