@@ -7,7 +7,7 @@ permissions:
   contents: read
   pull-requests: write
   issues: write
-
+    
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      
+          
       - name: Validate commit messages and branch name
         id: validation
         run: |
@@ -24,37 +24,52 @@ jobs:
           validation_failed=false
           error_message=""
           
-          # Validate branch name: username-featurename
-          if ! echo "$branch_name" | grep -qE '^[a-z]+[a-z0-9]*-[a-z]+[a-z0-9-]*$'; then
-            echo "Invalid branch name: $branch_name"
+          # Validate branch name: username-featurename (allowing numbers at start)
+          if ! echo "$branch_name" | grep -qE '^[a-z0-9]+[a-z0-9]*-[a-z]+[a-z0-9-]*$'; then
+            echo "❌ Invalid branch name: $branch_name"
             echo "Expected format: username-featurename"
             echo "Example: john-userauth or sarah-paymentgateway"
             validation_failed=true
-            error_message="**Branch name validation failed**\n\nBranch: \`$branch_name\`\nExpected format: \`username-featurename\`\nExamples: \`john-userauth\`, \`sarah-paymentgateway\`\n\n"
+            error_message="**❌ Branch name validation failed**\n\nBranch: \`$branch_name\`\nExpected format: \`username-featurename\`\nExamples: \`john-userauth\`, \`sarah-paymentgateway\`\n\n"
           else
-            echo "Branch name valid: $branch_name"
+            echo "✅ Branch name valid: $branch_name"
           fi
           
           # Validate commit messages: fix/feat: description
           echo "Checking commit messages..."
-          invalid_commits=""
-          git log --format="%h %s" origin/${{ github.base_ref }}..HEAD | while read commit_hash commit_msg; do
-            if ! echo "$commit_msg" | grep -qE '^(fix|feat): .{1,50}$'; then
-              echo "Invalid commit: $commit_hash - $commit_msg"
-              invalid_commits="$invalid_commits- \`$commit_hash\` - $commit_msg\n"
-              validation_failed=true # Set this here as well to capture all failures
+          commit_errors=""
+          
+          # Use a different approach to handle the while loop variable scope
+          git log --format="%h %s" origin/${{ github.base_ref }}..HEAD > /tmp/commits.txt
+          
+          while IFS=' ' read -r commit_hash commit_msg_part; do
+            # Get the full commit message (everything after the hash)
+            full_commit_msg=$(echo "$commit_hash $commit_msg_part" | cut -d' ' -f2-)
+            
+            if ! echo "$full_commit_msg" | grep -qE '^(fix|feat): .{1,50}$'; then
+              echo "❌ Invalid commit: $commit_hash - $full_commit_msg"
+              commit_errors="${commit_errors}- \`$commit_hash\` - $full_commit_msg\n"
+              validation_failed=true
             else
-              echo "Valid commit: $commit_hash - $commit_msg"
+              echo "✅ Valid commit: $commit_hash - $full_commit_msg"
             fi
-          done
+          done < /tmp/commits.txt
+          
+          # Add commit errors to error message if any
+          if [ ! -z "$commit_errors" ]; then
+            error_message="${error_message}**❌ Commit message validation failed**\n\nInvalid commits:\n$commit_errors\nExpected format: \`fix: description\` or \`feat: description\`\n"
+          fi
           
           # Set outputs for next step
           echo "validation_failed=$validation_failed" >> $GITHUB_OUTPUT
-          echo "error_message<<EOF" >> $GITHUB_OUTPUT
-          echo -e "$error_message" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          {
+            echo "error_message<<EOF"
+            echo -e "$error_message"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
           
-          if [ "$validation_failed" = true ]; then
+          # Exit with error if validation failed
+          if [ "$validation_failed" = "true" ]; then
             exit 1
           fi
 
