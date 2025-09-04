@@ -5,47 +5,61 @@ on:
     - cron: "0 2 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: write
+  issues: write
+
 jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Find and delete branches older than 60 days (except main, develop, staging)
+      - name: Delete old branches and generate report
         id: cleanup
         run: |
-          now=$(date +%s)
-          report="### Deleted branches report\n\n"
-          report+="Run date: $(date -u)\n\n"
+          git fetch origin --prune
 
-          deleted="false"
+          NOW=$(date +%s)
+          REPORT_CONTENT=""
+          DELETED_BRANCH_COUNT=0
+          REPORT_HEADER="### Branch Cleanup Report\n\nRun Date: $(date -u)\n\n"
 
-          for branch in $(git for-each-ref --format '%(refname:short) %(committerdate:unix)' refs/remotes/origin | grep -v 'origin/main' | grep -v 'origin/develop' | grep -v 'origin/staging'); do
-            bname=$(echo $branch | awk '{print $1}' | sed 's|origin/||')
-            bdate=$(echo $branch | awk '{print $2}')
+          BRANCHES_TO_DELETE=$(git for-each-ref --format='%(refname:short) %(committerdate:unix)' refs/remotes/origin | \
+            grep -v 'origin/main$' | \
+            grep -v 'origin/develop$' | \
+            grep -v 'origin/staging$')
 
-            age=$(( ($now - $bdate) / 86400 ))
+          if [ -z "$BRANCHES_TO_DELETE" ]; then
+            REPORT_CONTENT="No branches to clean up.\n"
+          else
+            while read -r BRANCH_REF COMMIT_DATE; do
+              BRANCH_NAME="${BRANCH_REF#origin/}"
+              AGE_DAYS=$(( ($NOW - $COMMIT_DATE) / 86400 ))
 
-            if [ $age -gt 60 ]; then
-              echo " Deleting old branch: $bname (last commit $age days ago)"
-              git push origin --delete $bname
-              report+="- **$bname** (last commit $age days ago)\n"
-              deleted="true"
-            fi
-          done
-
-          if [ "$deleted" = "false" ]; then
-            report+="No branches deleted \n"
+              if [ "$AGE_DAYS" -gt 60 ]; then
+                echo "Deleting branch: $BRANCH_NAME (last commit $AGE_DAYS days ago)"
+                git push origin --delete "$BRANCH_NAME"
+                REPORT_CONTENT+="- **$BRANCH_NAME** (last commit $AGE_DAYS days ago)\n"
+                DELETED_BRANCH_COUNT=$((DELETED_BRANCH_COUNT+1))
+              fi
+            done <<< "$BRANCHES_TO_DELETE"
           fi
 
+          if [ "$DELETED_BRANCH_COUNT" -eq 0 ]; then
+            REPORT_CONTENT="No branches were deleted.\n"
+          fi
+
+          REPORT_OUTPUT="$REPORT_HEADER$REPORT_CONTENT"
           echo "report<<EOF" >> $GITHUB_OUTPUT
-          echo -e "$report" >> $GITHUB_OUTPUT
+          echo "$REPORT_OUTPUT" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: Create or update audit issue
-        uses: peter-evans/create-issue-from-file@v5
+      - name: Create or update audit issue with report
+        uses: peter-evans/create-or-update-issue@v4
         with:
-          title: "🗑️ Branch Cleanup Report"
-          content-filepath: ./report.md
-          labels: cleanup, automation
+          title: "Branch Cleanup Report"
+          body: ${{ steps.cleanup.outputs.report }}
+          labels: cleanup, automation, audit
+          issue-number: 1
