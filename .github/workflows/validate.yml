@@ -1,0 +1,98 @@
+name: Validate Git Conventions
+on:
+  pull_request:
+    branches: [ main, develop ]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+    
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      - name: Validate commit messages and branch name
+        id: validation
+        run: |
+          # Validate branch name: username-featurename
+          branch_name="${{ github.head_ref }}"
+          validation_failed=false
+          error_message=""
+          
+          if ! echo "$branch_name" | grep -qE '^[a-z]+[a-z0-9]*-[a-z]+[a-z0-9-]*; then
+            echo " Invalid branch name: $branch_name"
+            echo "Expected format: username-featurename"
+            echo "Example: john-userauth or sarah-paymentgateway"
+            validation_failed=true
+            error_message="** Branch name validation failed**\n\nBranch: \`$branch_name\`\nExpected format: \`username-featurename\`\nExamples: \`john-userauth\`, \`sarah-paymentgateway\`\n\n"
+          else
+            echo " Branch name valid: $branch_name"
+          fi
+          
+          # Validate commit messages: fix/feat: description
+          echo "Checking commit messages..."
+          invalid_commits=""
+          git log --format="%h %s" origin/${{ github.base_ref }}..HEAD | while read commit_hash commit_msg; do
+            if ! echo "$commit_msg" | grep -qE '^(fix|feat): .{1,50}; then
+              echo " Invalid commit: $commit_hash - $commit_msg"
+              invalid_commits="$invalid_commits- \`$commit_hash\` - $commit_msg\n"
+            else
+              echo " Valid commit: $commit_hash - $commit_msg"
+            fi
+          done
+          
+          if [ ! -z "$invalid_commits" ]; then
+            validation_failed=true
+            error_message="$error_message** Commit message validation failed**\n\nInvalid commits:\n$invalid_commits\nExpected format: \`fix: description\` or \`feat: description\`\n"
+          fi
+          
+          # Set outputs for next step
+          echo "validation_failed=$validation_failed" >> $GITHUB_OUTPUT
+          echo "error_message<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$error_message" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          
+          if [ "$validation_failed" = true ]; then
+            exit 1
+          fi
+
+      - name: Comment on PR and close if validation failed
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const errorMessage = `${{ steps.validation.outputs.error_message }}`;
+            
+            const comment = `## Git Convention Validation Failed
+            
+            ${errorMessage}
+            
+            **Please fix the above issues and create a new PR with:**
+            1. Correct branch name format: \`username-featurename\`
+            2. Correct commit message format: \`fix: description\` or \`feat: description\`
+            
+            This PR will be closed automatically. Create a new PR once issues are fixed.`;
+            
+            // Add comment to PR
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment
+            });
+            
+            // Close the PR
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              state: 'closed'
+            });
+            
+            console.log('PR commented and closed due to validation failures');
