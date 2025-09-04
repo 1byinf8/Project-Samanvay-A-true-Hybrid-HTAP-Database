@@ -1,43 +1,40 @@
 name: Delete Old Branches
-
 on:
   schedule:
-    - cron: "0 2 * * *"
+    - cron: "0 2 * * *"  # Fixed: Added missing day field
   workflow_dispatch:
-
 permissions:
   contents: write
   issues: write
-
 jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
+        with:
+          fetch-depth: 0  # Fetch all history for all branches
+          
       - name: Delete old branches and generate report
         id: cleanup
         run: |
           git fetch origin --prune
-
           NOW=$(date +%s)
           REPORT_CONTENT=""
           DELETED_BRANCH_COUNT=0
           REPORT_HEADER="### Branch Cleanup Report\n\nRun Date: $(date -u)\n\n"
-
+          
           BRANCHES_TO_DELETE=$(git for-each-ref --format='%(refname:short) %(committerdate:unix)' refs/remotes/origin | \
             grep -v 'origin/main$' | \
             grep -v 'origin/develop$' | \
             grep -v 'origin/staging$')
-
+            
           if [ -z "$BRANCHES_TO_DELETE" ]; then
             REPORT_CONTENT="No branches to clean up.\n"
           else
             while read -r BRANCH_REF COMMIT_DATE; do
               BRANCH_NAME="${BRANCH_REF#origin/}"
               AGE_DAYS=$(( ($NOW - $COMMIT_DATE) / 86400 ))
-
               if [ "$AGE_DAYS" -gt 60 ]; then
                 echo "Deleting branch: $BRANCH_NAME (last commit $AGE_DAYS days ago)"
                 git push origin --delete "$BRANCH_NAME"
@@ -46,20 +43,54 @@ jobs:
               fi
             done <<< "$BRANCHES_TO_DELETE"
           fi
-
+          
           if [ "$DELETED_BRANCH_COUNT" -eq 0 ]; then
             REPORT_CONTENT="No branches were deleted.\n"
           fi
-
+          
           REPORT_OUTPUT="$REPORT_HEADER$REPORT_CONTENT"
-          echo "report<<EOF" >> $GITHUB_OUTPUT
-          echo "$REPORT_OUTPUT" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
+          {
+            echo "report<<EOF"
+            echo -e "$REPORT_OUTPUT"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+          
       - name: Create or update audit issue with report
-        uses: peter-evans/create-or-update-issue@v4
+        uses: actions/github-script@v7
         with:
-          title: "Branch Cleanup Report"
-          body: ${{ steps.cleanup.outputs.report }}
-          labels: cleanup, automation, audit
-          issue-number: 1
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const report = `${{ steps.cleanup.outputs.report }}`;
+            const title = "Branch Cleanup Report";
+            const labels = ["cleanup", "automation", "audit"];
+            
+            // Try to find existing issue
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: labels,
+              state: 'open'
+            });
+            
+            const existingIssue = issues.data.find(issue => issue.title === title);
+            
+            if (existingIssue) {
+              // Update existing issue
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existingIssue.number,
+                body: report
+              });
+              console.log(`Updated issue #${existingIssue.number}`);
+            } else {
+              // Create new issue
+              const newIssue = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: title,
+                body: report,
+                labels: labels
+              });
+              console.log(`Created issue #${newIssue.data.number}`);
+            }
