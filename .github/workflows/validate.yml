@@ -26,13 +26,13 @@ jobs:
           
           # Validate branch name: username-featurename (allowing numbers at start)
           if ! echo "$branch_name" | grep -qE '^[a-z0-9]+[a-z0-9]*-[a-z]+[a-z0-9-]*$'; then
-            echo "Invalid branch name: $branch_name"
+            echo "❌ Invalid branch name: $branch_name"
             echo "Expected format: username-featurename"
             echo "Example: john-userauth or sarah-paymentgateway"
             validation_failed=true
-            error_message="**Branch name validation failed**\\n\\nBranch: \`$branch_name\`\\nExpected format: \`username-featurename\`\\nExamples: \`john-userauth\`, \`sarah-paymentgateway\`\\n\\n"
+            error_message="**❌ Branch name validation failed**\\n\\nBranch: \`$branch_name\`\\nExpected format: \`username-featurename\`\\nExamples: \`john-userauth\`, \`sarah-paymentgateway\`\\n\\n"
           else
-            echo "Branch name valid: $branch_name"
+            echo "✅ Branch name valid: $branch_name"
           fi
           
           # Validate commit messages: fix/feat: description
@@ -47,17 +47,17 @@ jobs:
             full_commit_msg=$(echo "$commit_hash $commit_msg_part" | cut -d' ' -f2-)
             
             if ! echo "$full_commit_msg" | grep -qE '^(fix|feat): .{1,50}$'; then
-              echo "Invalid commit: $commit_hash - $full_commit_msg"
+              echo "❌ Invalid commit: $commit_hash - $full_commit_msg"
               commit_errors="${commit_errors}- \`$commit_hash\` - $full_commit_msg\n"
               validation_failed=true
             else
-              echo "Valid commit: $commit_hash - $full_commit_msg"
+              echo "✅ Valid commit: $commit_hash - $full_commit_msg"
             fi
           done < /tmp/commits.txt
           
           # Add commit errors to error message if any
           if [ ! -z "$commit_errors" ]; then
-            error_message="${error_message}**Commit message validation failed**\n\nInvalid commits:\n$commit_errors\nExpected format: \`fix: description\` or \`feat: description\`\n"
+            error_message="${error_message}**❌ Commit message validation failed**\n\nInvalid commits:\n$commit_errors\nExpected format: \`fix: description\` or \`feat: description\`\n"
           fi
           
           # Set outputs for next step
@@ -79,11 +79,12 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const errorMessage = `${{ steps.validation.outputs.error_message }}`;
+            // Get error message and properly handle it
+            const rawErrorMessage = process.env.ERROR_MESSAGE || '';
             
             const comment = `## Git Convention Validation Failed
             
-            ${errorMessage}
+            ${rawErrorMessage}
             
             **Please fix the above issues and create a new PR with:**
             1. Correct branch name format: \`username-featurename\`
@@ -108,3 +109,5 @@ jobs:
             });
             
             console.log('PR commented and closed due to validation failures');
+        env:
+          ERROR_MESSAGE: ${{ steps.validation.outputs.error_message }}
