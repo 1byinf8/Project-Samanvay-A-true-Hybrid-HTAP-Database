@@ -1,19 +1,39 @@
+// skiplist.hpp - Fixed version with include guards and forward declarations
+#pragma once
+#ifndef SKIPLIST_HPP
+#define SKIPLIST_HPP
+
 #include <atomic>
 #include <memory>
 #include <random>
 #include <vector>
 #include <limits>
+#include <string>
 
 namespace skiplist {
 
-template<typename T>
+struct Entry {
+    std::string key;
+    std::string value;
+    bool isDeleted = false;
+    uint64_t seq;
+
+    Entry() : seq(0) {}
+    
+    Entry(const std::string& k,
+          const std::string& v,
+          uint64_t s,
+          bool del = false)
+        : key(k), value(v), seq(s), isDeleted(del) {}
+};
+
 struct SkiplistNode {
-    T value;
+    Entry value;
     const int topLevel;
     std::atomic<bool> marked;
     std::vector<std::atomic<SkiplistNode*>> forward;
 
-    SkiplistNode(int level, const T& val)
+    SkiplistNode(int level, const Entry& val)
         : value(val), 
           topLevel(level), 
           marked(false), 
@@ -22,14 +42,14 @@ struct SkiplistNode {
             forward[i].store(nullptr, std::memory_order_relaxed);
         }
     }
-
-    // No explicit destructor needed due to std::vector
 };
 
-template<typename T>
+// Forward declaration
+class SkiplistIterator;
+
 class Skiplist {
 private:
-    using Node = SkiplistNode<T>;
+    using Node = SkiplistNode;
 
     static const int MAX_LEVEL = 16;
     static constexpr float P_FACTOR = 0.5f;
@@ -49,9 +69,23 @@ private:
         return lvl;
     }
 
+    // Sentinel value factory
+    static Entry sentinel() {
+        return Entry("", "", 0);
+    }
+
+    // Comparison helpers
+    static bool less_than(const Entry& a, const Entry& b) {
+        return a.key < b.key;
+    }
+    
+    static bool equal(const Entry& a, const Entry& b) {
+        return a.key == b.key;
+    }
+
     // Fills preds and succs arrays for a given key.
     // Returns true if a node with the key is found (regardless of mark).
-    bool find(const T& key, std::vector<Node*>& preds, std::vector<Node*>& succs) {
+    bool find(const Entry& key, std::vector<Node*>& preds, std::vector<Node*>& succs) {
         Node *pred = nullptr, *curr = nullptr, *succ = nullptr;
     retry:
         pred = header;
@@ -69,7 +103,7 @@ private:
                     succ = curr->forward[level].load(std::memory_order_acquire);
                 }
 
-                if (curr != nullptr && curr->value < key) {
+                if (curr != nullptr && less_than(curr->value, key)) {
                     pred = curr;
                     curr = succ;
                 } else {
@@ -79,16 +113,15 @@ private:
             preds[level] = pred;
             succs[level] = curr;
         }
-        return (curr != nullptr && curr->value == key);
+        return (curr != nullptr && equal(curr->value, key));
     }
 
 public:
     Skiplist() : currentMaxLevel(0) {
-        // Using a sentinel key for the header
-        header = new Node(MAX_LEVEL, std::numeric_limits<T>::min()); 
+        // Create header with sentinel value
+        header = new SkiplistNode(MAX_LEVEL, sentinel());
     }
 
-    // NOTE: Destructor is not thread-safe and leaks erased nodes.
     ~Skiplist() {
         Node* curr = header->forward[0].load();
         while (curr != nullptr) {
@@ -99,14 +132,17 @@ public:
         delete header;
     }
 
-    bool search(const T& target) {
+    bool search(const Entry& target, Entry* result = nullptr) {
         std::vector<Node*> preds(MAX_LEVEL + 1);
         std::vector<Node*> succs(MAX_LEVEL + 1);
         bool found = find(target, preds, succs);
+        if (found && result && !succs[0]->marked.load(std::memory_order_acquire)) {
+            *result = succs[0]->value;
+        }
         return found && !succs[0]->marked.load(std::memory_order_acquire);
     }
 
-    bool add(const T& key) {
+    bool add(const Entry& key) {
         int topLevel = randomLevel();
         std::vector<Node*> preds(MAX_LEVEL + 1);
         std::vector<Node*> succs(MAX_LEVEL + 1);
@@ -147,7 +183,7 @@ public:
         }
     }
 
-    bool erase(const T& key) {
+    bool erase(const Entry& key) {
         std::vector<Node*> preds(MAX_LEVEL + 1);
         std::vector<Node*> succs(MAX_LEVEL + 1);
 
@@ -172,9 +208,141 @@ public:
             return true;
         }
     }
+
+    void clear() {
+        Node* curr = header->forward[0].load();
+        while (curr != nullptr) {
+            Node* next = curr->forward[0].load();
+            delete curr;
+            curr = next;
+        }
+        for (auto& ptr : header->forward) {
+            ptr.store(nullptr, std::memory_order_relaxed);
+        }
+        currentMaxLevel.store(0);
+    }
+
+    // Iterator methods
+    SkiplistIterator begin();
+    SkiplistIterator end();
+    SkiplistIterator lowerBound(const std::string& key);
+    SkiplistIterator upperBound(const std::string& key);
+    
+    // Range query implementation
+    std::vector<std::pair<std::string, std::string>> rangeQuery(
+        const std::string& startKey, const std::string& endKey);
+    
+    // Scan all entries
+    std::vector<std::pair<std::string, std::string>> scanAll();
 };
 
-template<typename T>
-thread_local std::mt19937 Skiplist<T>::gen(std::random_device{}());
+// Iterator class definition
+class SkiplistIterator {
+private:
+    SkiplistNode* current;
+    
+public:
+    SkiplistIterator(SkiplistNode* node) : current(node) {}
+    
+    bool isValid() const {
+        return current != nullptr && !current->marked.load(std::memory_order_acquire);
+    }
+    
+    Entry& operator*() {
+        return current->value;
+    }
+    
+    Entry* operator->() {
+        return &current->value;
+    }
+    
+    SkiplistIterator& operator++() {
+        if (current) {
+            current = current->forward[0].load(std::memory_order_acquire);
+            // Skip marked nodes
+            while (current && current->marked.load(std::memory_order_acquire)) {
+                current = current->forward[0].load(std::memory_order_acquire);
+            }
+        }
+        return *this;
+    }
+    
+    SkiplistIterator operator++(int) {
+        SkiplistIterator temp = *this;
+        ++(*this);
+        return temp;
+    }
+    
+    bool operator==(const SkiplistIterator& other) const {
+        return current == other.current;
+    }
+    
+    bool operator!=(const SkiplistIterator& other) const {
+        return current != other.current;
+    }
+};
+
+// Implementation of iterator methods (inline)
+inline SkiplistIterator Skiplist::begin() {
+    SkiplistNode* first = header->forward[0].load(std::memory_order_acquire);
+    // Skip marked nodes
+    while (first && first->marked.load(std::memory_order_acquire)) {
+        first = first->forward[0].load(std::memory_order_acquire);
+    }
+    return SkiplistIterator(first);
+}
+
+inline SkiplistIterator Skiplist::end() {
+    return SkiplistIterator(nullptr);
+}
+
+inline SkiplistIterator Skiplist::lowerBound(const std::string& key) {
+    std::vector<Node*> preds(MAX_LEVEL + 1);
+    std::vector<Node*> succs(MAX_LEVEL + 1);
+    Entry target(key, "", 0);
+    find(target, preds, succs);
+    
+    SkiplistNode* node = succs[0];
+    // Skip marked nodes
+    while (node && node->marked.load(std::memory_order_acquire)) {
+        node = node->forward[0].load(std::memory_order_acquire);
+    }
+    return SkiplistIterator(node);
+}
+
+inline SkiplistIterator Skiplist::upperBound(const std::string& key) {
+    auto it = lowerBound(key);
+    if (it.isValid() && it->key == key) {
+        ++it;
+    }
+    return it;
+}
+
+inline std::vector<std::pair<std::string, std::string>> Skiplist::rangeQuery(
+    const std::string& startKey, const std::string& endKey) {
+    std::vector<std::pair<std::string, std::string>> results;
+    
+    auto it = lowerBound(startKey);
+    while (it.isValid() && it->key <= endKey) {
+        if (!it->isDeleted) {
+            results.push_back({it->key, it->value});
+        }
+        ++it;
+    }
+    return results;
+}
+
+inline std::vector<std::pair<std::string, std::string>> Skiplist::scanAll() {
+    std::vector<std::pair<std::string, std::string>> results;
+    
+    for (auto it = begin(); it != end(); ++it) {
+        if (!it->isDeleted) {
+            results.push_back({it->key, it->value});
+        }
+    }
+    return results;
+}
 
 } // namespace skiplist
+
+#endif // SKIPLIST_HPP
