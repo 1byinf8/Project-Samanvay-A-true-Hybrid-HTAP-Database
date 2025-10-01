@@ -1,0 +1,4 @@
+# Ignore log files
+*.log
+*.out
+*.sst
