@@ -84,7 +84,6 @@
  * - Background flush minimizes write stalls
  */
 
-// memTable.hpp - Fixed version
 #pragma once
 #ifndef MEMTABLE_HPP
 #define MEMTABLE_HPP
@@ -471,7 +470,6 @@ private:
         }
     }
 
-public:
 public:
     /**
      * @brief Construct a new MemtableManager
