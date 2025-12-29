@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Project Samanvay - HTAP Database Console</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+
+<body>
+    <!-- Header -->
+    <header class="main-header">
+        <div class="header-left">
+            <div class="logo-block">
+                <span class="logo-icon">◈</span>
+                <div class="logo-text">
+                    <h1>PROJECT SAMANVAY</h1>
+                    <span class="subtitle">Hybrid HTAP Database Console</span>
+                </div>
+            </div>
+        </div>
+        <div class="header-center">
+            <div class="status-bar">
+                <div class="status-item">
+                    <span class="status-label">System</span>
+                    <span class="status-value ok">● Online</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Uptime</span>
+                    <span class="status-value" id="uptime">00:00:00</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Ops/sec</span>
+                    <span class="status-value highlight" id="ops-sec">0</span>
+                </div>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="timestamp" id="timestamp">--:--:--</div>
+        </div>
+    </header>
+
+    <!-- Main Dashboard -->
+    <main class="dashboard-grid-balanced">
+        <!-- Stats Row -->
+        <div class="stats-row">
+            <div class="stat-card">
+                <div class="stat-icon-wrapper blue">✎</div>
+                <div class="stat-info">
+                    <div class="stat-value" id="stat-writes">0</div>
+                    <div class="stat-label">Total Writes</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon-wrapper green">⌕</div>
+                <div class="stat-info">
+                    <div class="stat-value" id="stat-reads">0</div>
+                    <div class="stat-label">Total Reads</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon-wrapper purple">↔</div>
+                <div class="stat-info">
+                    <div class="stat-value" id="stat-range">0</div>
+                    <div class="stat-label">Range Queries</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon-wrapper amber">▤</div>
+                <div class="stat-info">
+                    <div class="stat-value" id="stat-sstables">0</div>
+                    <div class="stat-label">SSTables</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon-wrapper red">⚙</div>
+                <div class="stat-info">
+                    <div class="stat-value" id="stat-storage">0 MB</div>
+                    <div class="stat-label">Storage Used</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2x2 Grid of Panels -->
+        <div class="panels-grid">
+            <!-- LSM Tree -->
+            <section class="panel">
+                <div class="panel-header">
+                    <span class="panel-icon">▤</span>
+                    <h2>LSM-Tree Architecture</h2>
+                    <span class="panel-badge">7 Levels</span>
+                </div>
+                <div class="panel-content">
+                    <div class="lsm-tree" id="lsm-tree"></div>
+                    <div class="lsm-legend">
+                        <div class="legend-item">
+                            <span class="legend-color row"></span>
+                            <span>Row (L0-L3)</span>
+                        </div>
+                        <div class="legend-item">
+                            <span class="legend-color columnar"></span>
+                            <span>Columnar (L4+)</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Memtable -->
+            <section class="panel">
+                <div class="panel-header">
+                    <span class="panel-icon">≡</span>
+                    <h2>Memtable (Skiplist)</h2>
+                    <span class="panel-badge" id="memtable-count">0 entries</span>
+                </div>
+                <div class="panel-content">
+                    <div class="memtable-controls">
+                        <button class="retro-btn" onclick="insertDemoEntry()">
+                            <span class="btn-icon">+</span> Insert
+                        </button>
+                        <button class="retro-btn warning" onclick="flushMemtable()">
+                            <span class="btn-icon">↓</span> Flush
+                        </button>
+                    </div>
+                    <div class="memtable-entries" id="memtable-entries"></div>
+                </div>
+            </section>
+
+            <!-- SSTable Browser -->
+            <section class="panel">
+                <div class="panel-header">
+                    <span class="panel-icon">◫</span>
+                    <h2>SSTable Browser</h2>
+                    <span class="panel-badge" id="sstable-badge">0 tables</span>
+                </div>
+                <div class="panel-content">
+                    <div class="sstable-list-compact" id="sstable-list"></div>
+                </div>
+            </section>
+
+            <!-- System Metrics / Charts -->
+            <section class="panel">
+                <div class="panel-header">
+                    <span class="panel-icon">📊</span>
+                    <h2>Performance Metrics</h2>
+                </div>
+                <div class="panel-content">
+                    <div class="metrics-container">
+                        <div class="metrics-section">
+                            <h4 style="color: var(--accent-primary); font-size: 12px; margin-bottom: 10px;">LSM Level
+                                Distribution</h4>
+                            <div class="chart-container-small">
+                                <canvas id="lsm-chart"></canvas>
+                            </div>
+                        </div>
+                        <div class="metrics-section">
+                            <h4 style="color: var(--accent-secondary); font-size: 12px; margin-bottom: 10px;">Operations
+                                Trend</h4>
+                            <div class="chart-container-small">
+                                <canvas id="ops-chart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <!-- Test Runner (Full Width) -->
+        <section class="panel test-panel-full">
+            <div class="panel-header">
+                <span class="panel-icon">▶</span>
+                <h2>Test Runner</h2>
+                <span class="panel-badge" id="test-status">Idle</span>
+            </div>
+            <div class="panel-content-test">
+                <div class="test-controls-horizontal">
+                    <select id="test-selector" class="retro-select">
+                        <option value="">-- Select Test --</option>
+                    </select>
+                    <button class="retro-btn primary" onclick="runTest()" id="run-test-btn">
+                        <span class="btn-icon">▶</span> Run Test
+                    </button>
+                    <button class="retro-btn" onclick="clearTestOutput()">
+                        Clear Output
+                    </button>
+                </div>
+                <div class="test-output-full">
+                    <div class="output-header">
+                        <span>Output Console</span>
+                    </div>
+                    <pre id="test-output-content">Waiting for test execution...</pre>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- SSTable Content Modal -->
+    <div class="modal" id="sstable-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-title">SSTable Details</h3>
+                <button class="close-btn" onclick="closeModal()">×</button>
+            </div>
+            <div class="modal-body" id="modal-body"></div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+
+</html>
