@@ -81,36 +81,55 @@
 
 ## Quick Start - Run All Tests
 
-### Compile All Tests
+### Option 1: Build with CMake (Recommended)
+
+CMake provides cross-platform builds that work on macOS, Linux, and Windows.
 
 ```bash
-cd /Users/1byinf8/Project-Samanvay-A-true-Hybrid-HTAP-Database/StorageEngine
+# Install CMake (if not already installed)
+# macOS:  brew install cmake
+# Ubuntu: sudo apt install cmake
+# Windows: Download from https://cmake.org/download/
 
-# Define the thread_local static for skiplist in test files that need it
-# (Already included in stress_test_benchmark.cpp)
+# Navigate to project root
+cd /path/to/Project-Samanvay-A-true-Hybrid-HTAP-Database
 
-# 1. Compile Skiplist Unit Tests (requires thread_local fix)
-# Note: Add -DSKIPLIST_THREAD_LOCAL_DEF or add this line before main():
-#   thread_local std::mt19937 skiplist::Skiplist::gen(std::random_device{}());
-g++ -std=c++17 -O2 -pthread -o test_skiplist test/test_skiplist.cpp \
-    -include test/stress_test_benchmark.cpp 2>/dev/null || \
-    echo "Note: test_skiplist requires thread_local definition - see Troubleshooting section"
+# Create build directory and configure
+mkdir build && cd build
+cmake ..
 
-# 2. Compile Skiplist Stress Tests (1M operations)
-# Same thread_local requirement as above
-g++ -std=c++17 -O2 -pthread -o stress_skiplist test/stress_skiplist.cpp \
-    -include <(echo "thread_local std::mt19937 skiplist::Skiplist::gen(std::random_device{}());") 2>/dev/null || true
+# Build all executables
+cmake --build .
 
-# 3. Compile HTAP Features Test Suite
+# Run tests
+./test_htap
+./test_skiplist
+./stress_test 100000 4
+```
+
+**CMake Build Options:**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `-DBUILD_TESTS=ON` | Build test executables | ON |
+| `-DCMAKE_BUILD_TYPE=Release` | Optimized build | - |
+
+```bash
+# Example: Release build
+cmake -DCMAKE_BUILD_TYPE=Release ..
+cmake --build .
+```
+
+### Option 2: Manual Compilation (g++/clang++)
+
+```bash
+cd /path/to/Project-Samanvay-A-true-Hybrid-HTAP-Database/StorageEngine
+
+# Compile test executables
+g++ -std=c++17 -O2 -pthread -o test_skiplist test/test_skiplist.cpp
 g++ -std=c++17 -O2 -o test_htap test/test_htap_features.cpp
-
-# 4. Compile Memtable Test Suite (10M operations)
 g++ -std=c++17 -O2 -pthread -o test_memtable test/test_almost.cpp
-
-# 5. Compile Read-Heavy Benchmark
 g++ -std=c++17 -O2 -pthread -o simple_bench test/simple.cpp
-
-# 6. Compile Full Stress Test Benchmark
 g++ -std=c++17 -O3 -pthread -o stress_test test/stress_test_benchmark.cpp
 ```
 
@@ -606,15 +625,20 @@ g++ -std=c++17 -O3 -pthread -o stress_test test/stress_test_benchmark.cpp
 
 ### Compilation Errors
 
-**Missing `thread_local` declaration:**
-```cpp
-// Add to the top of test file if not present:
-thread_local std::mt19937 skiplist::Skiplist::gen(std::random_device{}());
+**CMake not found:**
+```bash
+# macOS
+brew install cmake
+
+# Ubuntu/Debian
+sudo apt install cmake
+
+# Windows - Download from https://cmake.org/download/
 ```
 
-**Linker errors with `std::filesystem`:**
+**Linker errors with `std::filesystem` (GCC < 9):**
 ```bash
-# Add -lstdc++fs on older compilers
+# CMake handles this automatically. For manual compilation:
 g++ -std=c++17 -O2 -pthread -lstdc++fs -o test_file test/test_file.cpp
 ```
 

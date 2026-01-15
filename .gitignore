@@ -2,3 +2,5 @@
 *.log
 *.out
 *.sst
+/build
+.cache

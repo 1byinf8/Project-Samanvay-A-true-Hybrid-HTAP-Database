@@ -12,9 +12,6 @@
 #include <thread>
 #include <vector>
 
-// Define thread_local static for skiplist random generator
-thread_local std::mt19937 skiplist::Skiplist::gen(std::random_device{}());
-
 using namespace skiplist;
 
 // ---------- Helper to Generate Test Values for Entry ----------

@@ -22,9 +22,6 @@
 #include "../includes/sstable.hpp"
 #include "../includes/wal.hpp"
 
-// Define the thread_local static for skiplist
-thread_local std::mt19937 skiplist::Skiplist::gen(std::random_device{}());
-
 // Benchmark result structure
 struct BenchmarkResult {
   std::string name;
