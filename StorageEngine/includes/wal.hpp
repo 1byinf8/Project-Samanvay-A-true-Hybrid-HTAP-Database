@@ -4,13 +4,16 @@
 #define WAL_HPP
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
 #include <iostream>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace wal {
@@ -390,6 +393,217 @@ public:
     if (src.is_open() && dst.is_open()) {
       dst << src.rdbuf();
     }
+  }
+};
+
+// ==================== Group Commit WAL ====================
+// High-performance WAL with batched writes for improved throughput
+
+enum class FlushMode {
+  IMMEDIATE, // Flush after every write (safest, slowest)
+  BATCHED,   // Flush when batch is full or on explicit sync
+  TIMED      // Flush at regular intervals (background thread)
+};
+
+struct GroupCommitConfig {
+  FlushMode mode = FlushMode::TIMED;
+  size_t batchSize = 100;                      // Max entries before flush
+  size_t batchBytes = 64 * 1024;               // Max bytes before flush (64KB)
+  std::chrono::milliseconds flushInterval{10}; // Flush interval for TIMED mode
+};
+
+class GroupCommitWAL {
+private:
+  std::ofstream logFile_;
+  std::string filePath_;
+  GroupCommitConfig config_;
+
+  // Write buffer for batching
+  std::vector<std::vector<uint8_t>> pendingWrites_;
+  size_t pendingBytes_ = 0;
+  mutable std::mutex bufferMutex_;
+
+  // Background flush thread (for TIMED mode)
+  std::thread flushThread_;
+  std::atomic<bool> running_{false};
+  std::condition_variable flushCond_;
+  std::mutex flushCondMutex_;
+
+  // Statistics
+  std::atomic<uint64_t> totalWrites_{0};
+  std::atomic<uint64_t> totalFlushes_{0};
+  std::atomic<uint64_t> totalBytesWritten_{0};
+
+  uint64_t getCurrentTimestamp() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now().time_since_epoch())
+        .count();
+  }
+
+  std::vector<uint8_t> serialize(const WALEntry &entry) {
+    std::vector<uint8_t> buffer;
+
+    // Same serialization as WAL class
+    uint64_t seq = entry.sequenceNumber;
+    for (int i = 0; i < 8; ++i) {
+      buffer.push_back(seq & 0xFF);
+      seq >>= 8;
+    }
+
+    uint64_t ts = entry.timestamp;
+    for (int i = 0; i < 8; ++i) {
+      buffer.push_back(ts & 0xFF);
+      ts >>= 8;
+    }
+
+    buffer.push_back(static_cast<uint8_t>(entry.operation));
+
+    uint32_t keyLen = entry.key.size();
+    for (int i = 0; i < 4; ++i) {
+      buffer.push_back(keyLen & 0xFF);
+      keyLen >>= 8;
+    }
+    for (char c : entry.key) {
+      buffer.push_back(static_cast<uint8_t>(c));
+    }
+
+    uint32_t valueLen = entry.value.size();
+    for (int i = 0; i < 4; ++i) {
+      buffer.push_back(valueLen & 0xFF);
+      valueLen >>= 8;
+    }
+    for (char c : entry.value) {
+      buffer.push_back(static_cast<uint8_t>(c));
+    }
+
+    // CRC32 checksum
+    uint32_t crc = calculateCRC32(buffer.data(), buffer.size());
+    for (int i = 0; i < 4; ++i) {
+      buffer.push_back(crc & 0xFF);
+      crc >>= 8;
+    }
+
+    return buffer;
+  }
+
+  void flushBuffer() {
+    std::vector<std::vector<uint8_t>> toWrite;
+
+    {
+      std::lock_guard<std::mutex> lock(bufferMutex_);
+      if (pendingWrites_.empty())
+        return;
+      toWrite.swap(pendingWrites_);
+      pendingBytes_ = 0;
+    }
+
+    // Write all buffered entries with a single disk I/O
+    for (const auto &buffer : toWrite) {
+      uint32_t entrySize = buffer.size();
+      logFile_.write(reinterpret_cast<const char *>(&entrySize),
+                     sizeof(entrySize));
+      logFile_.write(reinterpret_cast<const char *>(buffer.data()),
+                     buffer.size());
+      totalBytesWritten_ += sizeof(entrySize) + buffer.size();
+    }
+
+    logFile_.flush();
+    totalFlushes_++;
+  }
+
+  void backgroundFlushWorker() {
+    while (running_) {
+      std::unique_lock<std::mutex> lock(flushCondMutex_);
+      flushCond_.wait_for(lock, config_.flushInterval,
+                          [this] { return !running_; });
+
+      if (!running_)
+        break;
+      flushBuffer();
+    }
+
+    // Final flush on shutdown
+    flushBuffer();
+  }
+
+public:
+  explicit GroupCommitWAL(const std::string &path,
+                          const GroupCommitConfig &config = GroupCommitConfig())
+      : filePath_(path), config_(config) {
+
+    logFile_.open(filePath_, std::ios::binary | std::ios::app);
+    if (!logFile_.is_open()) {
+      throw std::runtime_error("Failed to open WAL file: " + filePath_);
+    }
+
+    // Start background flush thread for TIMED mode
+    if (config_.mode == FlushMode::TIMED) {
+      running_ = true;
+      flushThread_ = std::thread(&GroupCommitWAL::backgroundFlushWorker, this);
+    }
+  }
+
+  ~GroupCommitWAL() {
+    // Stop background thread
+    running_ = false;
+    flushCond_.notify_all();
+    if (flushThread_.joinable()) {
+      flushThread_.join();
+    }
+
+    // Final flush
+    flushBuffer();
+    logFile_.close();
+  }
+
+  // Append entry to buffer (may not hit disk immediately)
+  bool append(uint64_t sequenceNumber, Operation op, const std::string &key,
+              const std::string &value) {
+
+    WALEntry entry(sequenceNumber, getCurrentTimestamp(), op, key, value);
+    auto buffer = serialize(entry);
+
+    bool shouldFlush = false;
+
+    {
+      std::lock_guard<std::mutex> lock(bufferMutex_);
+      pendingWrites_.push_back(std::move(buffer));
+      pendingBytes_ += pendingWrites_.back().size();
+      totalWrites_++;
+
+      // Check flush conditions
+      if (config_.mode == FlushMode::IMMEDIATE) {
+        shouldFlush = true;
+      } else if (config_.mode == FlushMode::BATCHED) {
+        shouldFlush = (pendingWrites_.size() >= config_.batchSize ||
+                       pendingBytes_ >= config_.batchBytes);
+      }
+      // TIMED mode flushes in background thread
+    }
+
+    if (shouldFlush) {
+      flushBuffer();
+    }
+
+    return true;
+  }
+
+  // Force immediate flush (for commit/sync)
+  void sync() { flushBuffer(); }
+
+  // Get statistics
+  uint64_t getTotalWrites() const { return totalWrites_; }
+  uint64_t getTotalFlushes() const { return totalFlushes_; }
+  uint64_t getTotalBytesWritten() const { return totalBytesWritten_; }
+
+  double getAverageWritesPerFlush() const {
+    uint64_t flushes = totalFlushes_.load();
+    return flushes > 0 ? static_cast<double>(totalWrites_) / flushes : 0.0;
+  }
+
+  size_t getPendingCount() const {
+    std::lock_guard<std::mutex> lock(bufferMutex_);
+    return pendingWrites_.size();
   }
 };
 
