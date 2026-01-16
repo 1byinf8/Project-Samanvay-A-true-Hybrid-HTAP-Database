@@ -1,11 +1,9 @@
-// skiplist.hpp - Fixed version with include guards and forward declarations
+// skiplist.hpp - Lock-free concurrent skiplist for HTAP Database
 #pragma once
 #ifndef SKIPLIST_HPP
 #define SKIPLIST_HPP
 
 #include <atomic>
-#include <limits>
-#include <memory>
 #include <random>
 #include <string>
 #include <vector>
@@ -332,6 +330,10 @@ inline std::vector<std::pair<std::string, std::string>> Skiplist::scanAll() {
   }
   return results;
 }
+
+// Define thread_local static member (C++17 inline variable)
+// This ensures single definition across all translation units
+inline thread_local std::mt19937 Skiplist::gen(std::random_device{}());
 
 } // namespace skiplist
 

@@ -1,0 +1,862 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Project Samanvay - A True Hybrid HTAP Database</title>
+    <meta name="description"
+        content="Samanvay is a next-generation HTAP database engine delivering real-time analytics on operational data without compromising transactional throughput.">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+    <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+</head>
+
+<body>
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="#" class="nav-logo">
+                <span class="logo-icon">⚡</span>
+                <span class="logo-text">Samanvay</span>
+            </a>
+            <div class="nav-links">
+                <a href="#features">Features</a>
+                <a href="#architecture">Architecture</a>
+                <a href="#components">Components</a>
+                <a href="#performance">Performance</a>
+                <a href="#quickstart">Quick Start</a>
+                <a href="https://github.com/1byinf8/Project-Samanvay-A-true-Hybrid-HTAP-Database" class="nav-github"
+                    target="_blank">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                        <path
+                            d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" />
+                    </svg>
+                    GitHub
+                </a>
+            </div>
+            <button class="mobile-menu-btn" aria-label="Toggle menu">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <header class="hero">
+        <div class="hero-glow"></div>
+        <div class="hero-content">
+            <div class="hero-badge">
+                <span class="badge-icon">🚀</span>
+                <span>Open Source HTAP Database</span>
+            </div>
+            <h1 class="hero-title">
+                <span class="gradient-text">Project Samanvay</span>
+                <br>
+                <span class="hero-subtitle">A True Hybrid HTAP Database</span>
+            </h1>
+            <p class="hero-description">
+                Bridge the gap between transactional performance and analytical insights.
+                Deliver <strong>real-time analytics</strong> on operational data without
+                compromising <strong>>500K writes/sec</strong> throughput.
+            </p>
+            <div class="hero-stats">
+                <div class="stat">
+                    <span class="stat-value">500K+</span>
+                    <span class="stat-label">Writes/sec</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-value">10M+</span>
+                    <span class="stat-label">Aggregations/sec</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-value">&lt;1ms</span>
+                    <span class="stat-label">Point Lookup</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-value">C++17</span>
+                    <span class="stat-label">Modern C++</span>
+                </div>
+            </div>
+            <div class="hero-actions">
+                <a href="#quickstart" class="btn btn-primary">
+                    <span>Get Started</span>
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M5 12h14M12 5l7 7-7 7" />
+                    </svg>
+                </a>
+                <a href="#architecture" class="btn btn-secondary">
+                    <span>View Architecture</span>
+                </a>
+            </div>
+            <div class="hero-code">
+                <div class="code-header">
+                    <span class="code-dot red"></span>
+                    <span class="code-dot yellow"></span>
+                    <span class="code-dot green"></span>
+                    <span class="code-title">Quick Install</span>
+                </div>
+                <pre><code><span class="code-comment"># Clone and build</span>
+git clone https://github.com/your-repo/samanvay.git
+<span class="code-keyword">cd</span> samanvay && mkdir build && <span class="code-keyword">cd</span> build
+cmake .. && cmake --build .
+
+<span class="code-comment"># Run tests</span>
+./test_htap && ./stress_test 1000000 8</code></pre>
+            </div>
+        </div>
+    </header>
+
+    <!-- Features Section -->
+    <section id="features" class="section features-section">
+        <div class="container">
+            <div class="section-header">
+                <span class="section-badge">Core Features</span>
+                <h2 class="section-title">Why Choose Samanvay?</h2>
+                <p class="section-description">
+                    A unified storage engine that combines the best of OLTP and OLAP worlds
+                </p>
+            </div>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">⚡</div>
+                    <h3>Lock-Free Concurrency</h3>
+                    <p>High-throughput OLTP workloads with lock-free skiplist data structures. No thread blocking,
+                        predictable latency.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">📊</div>
+                    <h3>Automatic Columnar Conversion</h3>
+                    <p>Cold data automatically converts to columnar format in deep LSM levels. No manual configuration
+                        required.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🔀</div>
+                    <h3>Intelligent Query Routing</h3>
+                    <p>Hybrid query router selects optimal execution path based on query characteristics—row store or
+                        columnar.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🔒</div>
+                    <h3>ACID Compliant</h3>
+                    <p>Write-Ahead Logging with fsync ensures durability. MVCC via sequence numbers provides isolation.
+                    </p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🗜️</div>
+                    <h3>Advanced Compression</h3>
+                    <p>RLE and Dictionary encoding for columnar data. Achieve 3-10x compression ratios on real-world
+                        data.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🧩</div>
+                    <h3>Embeddable</h3>
+                    <p>Single-process embedded engine. No external dependencies. Perfect for edge computing and IoT
+                        applications.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Architecture Section -->
+    <section id="architecture" class="section architecture-section">
+        <div class="container">
+            <div class="section-header">
+                <span class="section-badge">System Design</span>
+                <h2 class="section-title">Architecture Overview</h2>
+                <p class="section-description">
+                    Layered architecture optimized for both transactional and analytical workloads
+                </p>
+            </div>
+            <div class="architecture-diagram">
+                <div class="arch-layer facade">
+                    <div class="layer-label">API Layer</div>
+                    <div class="arch-box full-width">
+                        <span class="box-title">Storage Engine Facade</span>
+                        <span class="box-desc">Unified API for all operations</span>
+                    </div>
+                </div>
+                <div class="arch-layer router">
+                    <div class="layer-label">Query Layer</div>
+                    <div class="arch-box full-width router-box">
+                        <span class="box-title">Hybrid Query Router</span>
+                        <div class="router-paths">
+                            <div class="path oltp-path">
+                                <span>OLTP Path</span>
+                                <small>Point lookups, small updates</small>
+                            </div>
+                            <div class="path olap-path">
+                                <span>OLAP Path</span>
+                                <small>Aggregations, full scans</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="arch-layer memory">
+                    <div class="layer-label">Memory Layer</div>
+                    <div class="arch-boxes">
+                        <div class="arch-box">
+                            <span class="box-title">Memtable (Skiplist)</span>
+                            <ul class="box-features">
+                                <li>Lock-free concurrent R/W</li>
+                                <li>MVCC sequence tracking</li>
+                                <li>Range query iterators</li>
+                            </ul>
+                        </div>
+                        <div class="arch-box columnar">
+                            <span class="box-title">Columnar Format</span>
+                            <ul class="box-features">
+                                <li>RLE & Dictionary encoding</li>
+                                <li>Column statistics</li>
+                                <li>Row group organization</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+                <div class="arch-layer storage">
+                    <div class="layer-label">Storage Layer</div>
+                    <div class="arch-box full-width lsm-box">
+                        <span class="box-title">LSM-Tree Level Manager</span>
+                        <div class="lsm-levels">
+                            <div class="lsm-level row-level">L0</div>
+                            <div class="lsm-level row-level">L1</div>
+                            <div class="lsm-level row-level">L2</div>
+                            <div class="lsm-level row-level">L3</div>
+                            <div class="lsm-arrow">→</div>
+                            <div class="lsm-level columnar-level">L4</div>
+                            <div class="lsm-level columnar-level">L5</div>
+                            <div class="lsm-level columnar-level">L6</div>
+                        </div>
+                        <div class="lsm-legend">
+                            <span class="legend-item row">Row-oriented (SSTable)</span>
+                            <span class="legend-item columnar">Columnar (Analytics)</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="arch-layer persistence">
+                    <div class="layer-label">Persistence Layer</div>
+                    <div class="arch-boxes">
+                        <div class="arch-box">
+                            <span class="box-title">Write-Ahead Log</span>
+                            <ul class="box-features">
+                                <li>Durability guarantee</li>
+                                <li>Crash recovery</li>
+                                <li>Checkpointing</li>
+                            </ul>
+                        </div>
+                        <div class="arch-box">
+                            <span class="box-title">Compaction Engine</span>
+                            <ul class="box-features">
+                                <li>Multi-way merge</li>
+                                <li>Tombstone removal</li>
+                                <li>Columnar conversion</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Components Section -->
+    <section id="components" class="section components-section">
+        <div class="container">
+            <div class="section-header">
+                <span class="section-badge">Deep Dive</span>
+                <h2 class="section-title">Core Components</h2>
+                <p class="section-description">
+                    Each component is designed for maximum performance and reliability
+                </p>
+            </div>
+            <div class="components-tabs">
+                <div class="tab-buttons">
+                    <button class="tab-btn active" data-tab="skiplist">Skiplist</button>
+                    <button class="tab-btn" data-tab="lsm">LSM-Tree</button>
+                    <button class="tab-btn" data-tab="columnar">Columnar</button>
+                    <button class="tab-btn" data-tab="wal">WAL</button>
+                    <button class="tab-btn" data-tab="sstable">SSTable</button>
+                    <button class="tab-btn" data-tab="router">Query Router</button>
+                </div>
+                <div class="tab-content">
+                    <!-- Skiplist Tab -->
+                    <div class="tab-panel active" id="skiplist">
+                        <div class="component-content">
+                            <div class="component-info">
+                                <h3>Lock-Free Skiplist Memtable</h3>
+                                <p>The memtable is the in-memory write buffer absorbing all incoming writes before
+                                    persistence. Our lock-free implementation enables high concurrency without mutex
+                                    contention.</p>
+                                <div class="component-features">
+                                    <div class="cf-item">
+                                        <span class="cf-icon">✓</span>
+                                        <span>Compare-and-swap based inserts</span>
+                                    </div>
+                                    <div class="cf-item">
+                                        <span class="cf-icon">✓</span>
+                                        <span>Logical deletion with tombstones</span>
+                                    </div>
+                                    <div class="cf-item">
+                                        <span class="cf-icon">✓</span>
+                                        <span>O(log n) expected operations</span>
+                                    </div>
+                                    <div class="cf-item">
+                                        <span class="cf-icon">✓</span>
+                                        <span>Range query via lowerBound()</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="component-code">
+                                <pre><code><span class="code-keyword">class</span> <span class="code-class">Skiplist</span> {
+<span class="code-keyword">private</span>:
+    <span class="code-keyword">static const int</span> MAX_LEVEL = <span class="code-number">16</span>;
+    std::atomic&lt;<span class="code-keyword">int</span>&gt; currentMaxLevel;
+    Node* header;
+    
+<span class="code-keyword">public</span>:
+    <span class="code-comment">// CAS-based concurrent insert</span>
+    <span class="code-keyword">bool</span> <span class="code-function">add</span>(<span class="code-keyword">const</span> Entry& key);
+    
+    <span class="code-comment">// Lock-free search</span>
+    <span class="code-keyword">bool</span> <span class="code-function">search</span>(<span class="code-keyword">const</span> Entry& target);
+    
+    <span class="code-comment">// Logical deletion</span>
+    <span class="code-keyword">bool</span> <span class="code-function">erase</span>(<span class="code-keyword">const</span> Entry& key);
+    
+    <span class="code-comment">// Range query support</span>
+    Iterator <span class="code-function">lowerBound</span>(<span class="code-keyword">const</span> string& key);
+};</code></pre>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- LSM-Tree Tab -->
+                    <div class="tab-panel" id="lsm">
+                        <div class="component-content">
+                            <div class="component-info">
+                                <h3>LSM-Tree Level Manager</h3>
+                                <p>Organizes persistent storage into multiple levels with automatic row-to-columnar
+                                    conversion. Write amplification is minimized through size-tiered compaction.</p>
+                                <div class="component-table">
+                                    <table>
+                                        <thead>
+                                            <tr>
+                                                <th>Level</th>
+                                                <th>Format</th>
+                                                <th>Size Limit</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr>
+                                                <td>L0</td>
+                                                <td>Row (SSTable)</td>
+                                                <td>64 MB</td>
+                                            </tr>
+                                            <tr>
+                                                <td>L1-L3</td>
+                                                <td>Row (SSTable)</td>
+                                                <td>640 MB - 64 GB</td>
+                                            </tr>
+                                            <tr class="highlight">
+                                                <td>L4+</td>
+                                                <td>Columnar</td>
+                                                <td>Unbounded</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="component-code">
+                                <pre><code><span class="code-keyword">class</span> <span class="code-class">LSMTreeManager</span> {
+<span class="code-keyword">public</span>:
+    <span class="code-comment">// Add SSTable to level</span>
+    <span class="code-keyword">void</span> <span class="code-function">addSSTable</span>(<span class="code-keyword">const</span> SSTableMeta& meta);
+    
+    <span class="code-comment">// Query support</span>
+    vector&lt;SSTableMeta&gt; <span class="code-function">getSSTablesForKey</span>(
+        <span class="code-keyword">const</span> string& key);
+    
+    <span class="code-comment">// Compaction control</span>
+    <span class="code-keyword">bool</span> <span class="code-function">shouldTriggerCompaction</span>(<span class="code-keyword">int</span> level);
+    
+    <span class="code-comment">// Check if level uses columnar</span>
+    <span class="code-keyword">bool</span> <span class="code-function">isColumnarLevel</span>(<span class="code-keyword">int</span> level) <span class="code-keyword">const</span> {
+        <span class="code-keyword">return</span> level >= <span class="code-number">4</span>;
+    }
+};</code></pre>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Columnar Tab -->
+                    <div class="tab-panel" id="columnar">
+                        <div class="component-content">
+                            <div class="component-info">
+                                <h3>Columnar Storage Format</h3>
+                                <p>OLAP-optimized storage with advanced compression. Column statistics enable query
+                                    optimization and aggregation acceleration.</p>
+                                <div class="compression-demo">
+                                    <div class="compression-type">
+                                        <h4>RLE Encoding</h4>
+                                        <div class="compression-visual">
+                                            <div class="cv-before">
+                                                <span>A</span><span>A</span><span>A</span><span>A</span><span>B</span><span>B</span><span>C</span><span>C</span><span>C</span>
+                                            </div>
+                                            <div class="cv-arrow">→</div>
+                                            <div class="cv-after">
+                                                <span>(A,4)</span><span>(B,2)</span><span>(C,3)</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="compression-type">
+                                        <h4>Dictionary Encoding</h4>
+                                        <div class="compression-visual">
+                                            <div class="cv-before">
+                                                <span>USA</span><span>UK</span><span>USA</span><span>India</span>
+                                            </div>
+                                            <div class="cv-arrow">→</div>
+                                            <div class="cv-after">
+                                                <span>0</span><span>1</span><span>0</span><span>2</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="component-code">
+                                <pre><code><span class="code-keyword">class</span> <span class="code-class">ColumnBlock</span> {
+<span class="code-keyword">public</span>:
+    <span class="code-comment">// Fast aggregations</span>
+    <span class="code-keyword">int64_t</span> <span class="code-function">sumInt64</span>() <span class="code-keyword">const</span>;
+    <span class="code-keyword">int64_t</span> <span class="code-function">minInt64</span>() <span class="code-keyword">const</span>;
+    <span class="code-keyword">int64_t</span> <span class="code-function">maxInt64</span>() <span class="code-keyword">const</span>;
+    <span class="code-keyword">size_t</span> <span class="code-function">count</span>() <span class="code-keyword">const</span>;
+    
+    <span class="code-comment">// Compression</span>
+    <span class="code-keyword">static</span> vector&lt;uint8_t&gt; <span class="code-function">rleEncode</span>(
+        <span class="code-keyword">const</span> vector&lt;<span class="code-keyword">int64_t</span>&gt;& data);
+    
+    <span class="code-keyword">static</span> vector&lt;<span class="code-keyword">int64_t</span>&gt; <span class="code-function">rleDecode</span>(
+        <span class="code-keyword">const</span> vector&lt;uint8_t&gt;& encoded);
+};</code></pre>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- WAL Tab -->
+                    <div class="tab-panel" id="wal">
+                        <div class="component-content">
+                            <div class="component-info">
+                                <h3>Write-Ahead Log (WAL)</h3>
+                                <p>Ensures durability by persisting all operations before they're applied to the
+                                    memtable. Binary format with fsync guarantees data survives crashes.</p>
+                                <div class="wal-flow">
+                                    <div class="wal-step">
+                                        <div class="wal-icon">1</div>
+                                        <span>Generate Sequence</span>
+                                    </div>
+                                    <div class="wal-arrow">→</div>
+                                    <div class="wal-step">
+                                        <div class="wal-icon">2</div>
+                                        <span>WAL Append + fsync</span>
+                                    </div>
+                                    <div class="wal-arrow">→</div>
+                                    <div class="wal-step">
+                                        <div class="wal-icon">3</div>
+                                        <span>Memtable Insert</span>
+                                    </div>
+                                    <div class="wal-arrow">→</div>
+                                    <div class="wal-step">
+                                        <div class="wal-icon">4</div>
+                                        <span>Acknowledge</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="component-code">
+                                <pre><code><span class="code-keyword">struct</span> <span class="code-class">WALEntry</span> {
+    <span class="code-keyword">uint64_t</span> sequenceNumber;
+    <span class="code-keyword">uint64_t</span> timestamp;
+    Operation operation;  <span class="code-comment">// INSERT or DELETE</span>
+    string key;
+    string value;
+};
+
+<span class="code-keyword">class</span> <span class="code-class">WAL</span> {
+<span class="code-keyword">public</span>:
+    <span class="code-keyword">bool</span> <span class="code-function">append</span>(<span class="code-keyword">uint64_t</span> seq, Operation op,
+               <span class="code-keyword">const</span> string& key, <span class="code-keyword">const</span> string& val);
+    <span class="code-keyword">void</span> <span class="code-function">sync</span>();  <span class="code-comment">// fsync to disk</span>
+    vector&lt;WALEntry&gt; <span class="code-function">recover</span>();
+    <span class="code-keyword">void</span> <span class="code-function">truncate</span>(<span class="code-keyword">uint64_t</span> upToSeq);
+};</code></pre>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SSTable Tab -->
+                    <div class="tab-panel" id="sstable">
+                        <div class="component-content">
+                            <div class="component-info">
+                                <h3>SSTable (Sorted String Table)</h3>
+                                <p>Immutable on-disk structures with Bloom filters for O(1) negative lookups and sparse
+                                    indexes for O(log n) seeks.</p>
+                                <div class="sstable-structure">
+                                    <div class="ss-block header">
+                                        <span class="block-name">Header</span>
+                                        <span class="block-desc">Version, sequences, key range</span>
+                                    </div>
+                                    <div class="ss-block data">
+                                        <span class="block-name">Data Section</span>
+                                        <span class="block-desc">Sorted key-value entries</span>
+                                    </div>
+                                    <div class="ss-block index">
+                                        <span class="block-name">Sparse Index</span>
+                                        <span class="block-desc">Every Nth key → offset</span>
+                                    </div>
+                                    <div class="ss-block bloom">
+                                        <span class="block-name">Bloom Filter</span>
+                                        <span class="block-desc">~1% false positive rate</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="component-code">
+                                <pre><code><span class="code-keyword">class</span> <span class="code-class">SSTable</span> {
+<span class="code-keyword">public</span>:
+    <span class="code-comment">// Create from sorted entries</span>
+    <span class="code-keyword">bool</span> <span class="code-function">create</span>(<span class="code-keyword">const</span> vector&lt;Entry&gt;& sorted);
+    
+    <span class="code-comment">// Point lookup with Bloom filter</span>
+    optional&lt;Entry&gt; <span class="code-function">get</span>(<span class="code-keyword">const</span> string& key);
+    
+    <span class="code-comment">// Range scan</span>
+    vector&lt;Entry&gt; <span class="code-function">rangeQuery</span>(
+        <span class="code-keyword">const</span> string& start,
+        <span class="code-keyword">const</span> string& end);
+    
+    <span class="code-comment">// Load from disk</span>
+    <span class="code-keyword">bool</span> <span class="code-function">load</span>();
+};</code></pre>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Query Router Tab -->
+                    <div class="tab-panel" id="router">
+                        <div class="component-content">
+                            <div class="component-info">
+                                <h3>Hybrid Query Router</h3>
+                                <p>Intelligently routes queries between row-store (OLTP) and columnar (OLAP) paths based
+                                    on query characteristics and data locality.</p>
+                                <div class="router-rules">
+                                    <div class="rule">
+                                        <span class="rule-type">Point Lookup</span>
+                                        <span class="rule-arrow">→</span>
+                                        <span class="rule-path row">Row Path</span>
+                                    </div>
+                                    <div class="rule">
+                                        <span class="rule-type">Small Range (&lt;10K)</span>
+                                        <span class="rule-arrow">→</span>
+                                        <span class="rule-path row">Row Path</span>
+                                    </div>
+                                    <div class="rule">
+                                        <span class="rule-type">Aggregation (SUM/AVG)</span>
+                                        <span class="rule-arrow">→</span>
+                                        <span class="rule-path columnar">Columnar Path</span>
+                                    </div>
+                                    <div class="rule">
+                                        <span class="rule-type">Full Scan</span>
+                                        <span class="rule-arrow">→</span>
+                                        <span class="rule-path both">Both Paths</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="component-code">
+                                <pre><code><span class="code-keyword">class</span> <span class="code-class">HybridQueryRouter</span> {
+<span class="code-keyword">public</span>:
+    <span class="code-comment">// Generate execution plan</span>
+    QueryPlan <span class="code-function">planQuery</span>(<span class="code-keyword">const</span> QueryRequest& req);
+    
+    <span class="code-comment">// Explain plan (for debugging)</span>
+    string <span class="code-function">explainPlan</span>(<span class="code-keyword">const</span> QueryPlan& plan);
+};
+
+<span class="code-comment">// Query builder pattern</span>
+<span class="code-keyword">auto</span> req = QueryRequest::<span class="code-function">aggregation</span>(
+    AggregationType::SUM, <span class="code-string">"amount"</span>);
+<span class="code-keyword">auto</span> plan = router.<span class="code-function">planQuery</span>(req);
+<span class="code-comment">// → useColumnarPath = true</span></code></pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Performance Section -->
+    <section id="performance" class="section performance-section">
+        <div class="container">
+            <div class="section-header">
+                <span class="section-badge">Benchmarks</span>
+                <h2 class="section-title">Performance Metrics</h2>
+                <p class="section-description">
+                    Tested on modern hardware with 8 concurrent threads and up to 10M records
+                </p>
+            </div>
+            <div class="benchmark-cards">
+                <div class="benchmark-card">
+                    <div class="benchmark-header">
+                        <span class="benchmark-icon">📝</span>
+                        <h3>OLTP Writes</h3>
+                    </div>
+                    <div class="benchmark-value">
+                        <span class="bv-number">524,873</span>
+                        <span class="bv-unit">ops/sec</span>
+                    </div>
+                    <div class="benchmark-bar">
+                        <div class="bar-fill" style="width: 85%"></div>
+                    </div>
+                    <p class="benchmark-desc">Concurrent writes with 8 threads on lock-free skiplist</p>
+                </div>
+                <div class="benchmark-card">
+                    <div class="benchmark-header">
+                        <span class="benchmark-icon">🔍</span>
+                        <h3>OLTP Reads</h3>
+                    </div>
+                    <div class="benchmark-value">
+                        <span class="bv-number">1,048,576</span>
+                        <span class="bv-unit">ops/sec</span>
+                    </div>
+                    <div class="benchmark-bar">
+                        <div class="bar-fill" style="width: 100%"></div>
+                    </div>
+                    <p class="benchmark-desc">Concurrent point lookups with Bloom filter optimization</p>
+                </div>
+                <div class="benchmark-card">
+                    <div class="benchmark-header">
+                        <span class="benchmark-icon">📊</span>
+                        <h3>OLAP Aggregation</h3>
+                    </div>
+                    <div class="benchmark-value">
+                        <span class="bv-number">10,526,315</span>
+                        <span class="bv-unit">values/sec</span>
+                    </div>
+                    <div class="benchmark-bar">
+                        <div class="bar-fill olap" style="width: 95%"></div>
+                    </div>
+                    <p class="benchmark-desc">SUM/MIN/MAX/COUNT on columnar data</p>
+                </div>
+                <div class="benchmark-card">
+                    <div class="benchmark-header">
+                        <span class="benchmark-icon">🗜️</span>
+                        <h3>RLE Compression</h3>
+                    </div>
+                    <div class="benchmark-value">
+                        <span class="bv-number">5,555,555</span>
+                        <span class="bv-unit">values/sec</span>
+                    </div>
+                    <div class="benchmark-bar">
+                        <div class="bar-fill compression" style="width: 70%"></div>
+                    </div>
+                    <p class="benchmark-desc">Run-length encode + decode throughput</p>
+                </div>
+            </div>
+            <div class="benchmark-table-container">
+                <h3>Full Benchmark Results</h3>
+                <table class="benchmark-table">
+                    <thead>
+                        <tr>
+                            <th>Operation</th>
+                            <th>Throughput</th>
+                            <th>Latency (p99)</th>
+                            <th>Notes</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Concurrent Writes (8 threads)</td>
+                            <td class="highlight">>500K ops/sec</td>
+                            <td>&lt;5 μs</td>
+                            <td>Lock-free skiplist</td>
+                        </tr>
+                        <tr>
+                            <td>Concurrent Reads (8 threads)</td>
+                            <td class="highlight">>1M ops/sec</td>
+                            <td>&lt;2 μs</td>
+                            <td>With Bloom filters</td>
+                        </tr>
+                        <tr>
+                            <td>Range Query (100 keys)</td>
+                            <td>-</td>
+                            <td>&lt;1 ms</td>
+                            <td>Multi-layer merge</td>
+                        </tr>
+                        <tr>
+                            <td>SSTable Sequential Write</td>
+                            <td>>150K entries/sec</td>
+                            <td>-</td>
+                            <td>15+ MB/s</td>
+                        </tr>
+                        <tr>
+                            <td>Columnar Aggregation</td>
+                            <td class="highlight">>10M values/sec</td>
+                            <td>-</td>
+                            <td>80+ MB/s</td>
+                        </tr>
+                        <tr>
+                            <td>WAL Write (with fsync)</td>
+                            <td>>10K ops/sec</td>
+                            <td>-</td>
+                            <td>Fsync limited</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <!-- Quick Start Section -->
+    <section id="quickstart" class="section quickstart-section">
+        <div class="container">
+            <div class="section-header">
+                <span class="section-badge">Get Started</span>
+                <h2 class="section-title">Quick Start Guide</h2>
+                <p class="section-description">
+                    Build and run Samanvay in under 5 minutes
+                </p>
+            </div>
+            <div class="quickstart-steps">
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <div class="step-content">
+                        <h3>Clone the Repository</h3>
+                        <div class="step-code">
+                            <pre><code>git clone https://github.com/your-repo/Project-Samanvay.git
+cd Project-Samanvay</code></pre>
+                        </div>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <div class="step-content">
+                        <h3>Build with CMake</h3>
+                        <div class="step-code">
+                            <pre><code><span class="code-comment"># Create build directory</span>
+mkdir build && cd build
+
+<span class="code-comment"># Configure and build</span>
+cmake ..
+cmake --build .</code></pre>
+                        </div>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <div class="step-content">
+                        <h3>Run Tests</h3>
+                        <div class="step-code">
+                            <pre><code><span class="code-comment"># Quick validation</span>
+./test_skiplist && ./test_htap
+
+<span class="code-comment"># Stress test (1M records, 8 threads)</span>
+./stress_test 1000000 8</code></pre>
+                        </div>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-number">4</div>
+                    <div class="step-content">
+                        <h3>Use in Your Project</h3>
+                        <div class="step-code">
+                            <pre><code><span class="code-keyword">#include</span> <span class="code-string">"storage_engine.hpp"</span>
+
+<span class="code-keyword">int</span> <span class="code-function">main</span>() {
+    storage::StorageEngine engine;
+    
+    <span class="code-comment">// OLTP: Point operations</span>
+    engine.<span class="code-function">put</span>(<span class="code-string">"user:1"</span>, <span class="code-string">"Alice"</span>);
+    <span class="code-keyword">auto</span> val = engine.<span class="code-function">get</span>(<span class="code-string">"user:1"</span>);
+    
+    <span class="code-comment">// OLAP: Aggregation query</span>
+    <span class="code-keyword">auto</span> req = QueryRequest::<span class="code-function">aggregation</span>(
+        AggregationType::SUM, <span class="code-string">"amount"</span>);
+    <span class="code-keyword">auto</span> result = engine.<span class="code-function">executeAggregation</span>(req);
+}</code></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="requirements">
+                <h3>Requirements</h3>
+                <div class="req-grid">
+                    <div class="req-item">
+                        <span class="req-icon">🔧</span>
+                        <span class="req-name">C++17 Compiler</span>
+                        <span class="req-detail">GCC 8+, Clang 7+, MSVC 2019+</span>
+                    </div>
+                    <div class="req-item">
+                        <span class="req-icon">📦</span>
+                        <span class="req-name">CMake 3.14+</span>
+                        <span class="req-detail">Build system</span>
+                    </div>
+                    <div class="req-item">
+                        <span class="req-icon">🧵</span>
+                        <span class="req-name">pthread</span>
+                        <span class="req-detail">POSIX threads</span>
+                    </div>
+                    <div class="req-item">
+                        <span class="req-icon">💾</span>
+                        <span class="req-name">std::filesystem</span>
+                        <span class="req-detail">C++17 filesystem</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-brand">
+                    <div class="footer-logo">
+                        <span class="logo-icon">⚡</span>
+                        <span class="logo-text">Samanvay</span>
+                    </div>
+                    <p>A True Hybrid HTAP Database</p>
+                    <p class="footer-sanskrit">समन्वय (Coordination)</p>
+                </div>
+                <div class="footer-links">
+                    <div class="footer-col">
+                        <h4>Documentation</h4>
+                        <a href="#architecture">Architecture</a>
+                        <a href="#components">Components</a>
+                        <a href="#performance">Benchmarks</a>
+                        <a href="#quickstart">Quick Start</a>
+                    </div>
+                    <div class="footer-col">
+                        <h4>Resources</h4>
+                        <a href="WHITEPAPER.md">Whitepaper</a>
+                        <a href="../README.md">README</a>
+                        <a href="https://github.com/1byinf8/Project-Samanvay-A-true-Hybrid-HTAP-Database">GitHub</a>
+                    </div>
+                    <div class="footer-col">
+                        <h4>Project</h4>
+                        <a href="#">Contributing</a>
+                        <a href="#">License (MIT)</a>
+                        <a href="#">Changelog</a>
+                    </div>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>&copy; 2026 Project Samanvay. Open Source under MIT License.</p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+
+</html>
