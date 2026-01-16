@@ -8,7 +8,7 @@
 #include <vector>
 
 // include your memtable
-#include "../src/memTable.cpp"
+#include "../includes/memtable.hpp"
 
 class ReadHeavyBenchmark {
 private:

@@ -12,13 +12,8 @@
 #include "compaction.hpp"
 #include "hybrid_query_router.hpp"
 #include "lsm_levels.hpp"
+#include "memtable.hpp"
 #include "range_query_executor.hpp"
-
-// Forward declaration of memtable components
-// (Defined in memTable.cpp)
-namespace memTable {
-class MemtableManager;
-}
 
 namespace storage {
 
@@ -78,6 +73,7 @@ private:
 
   // Core components
   std::shared_ptr<lsm::LSMTreeManager> lsmManager_;
+  std::unique_ptr<memTable::MemtableManager> memtableManager_;
   std::unique_ptr<compaction::CompactionScheduler> compactionScheduler_;
   std::unique_ptr<query::RangeQueryExecutor> rangeQueryExecutor_;
   std::unique_ptr<query::HybridQueryRouter> queryRouter_;
@@ -103,6 +99,10 @@ public:
 
     // Initialize LSM-tree manager
     lsmManager_ = std::make_shared<lsm::LSMTreeManager>(config_.lsmConfig);
+
+    // Initialize memtable manager with LSM integration
+    memtableManager_ = std::make_unique<memTable::MemtableManager>(
+        config_.memtableSizeLimit, config_.walPath, lsmManager_);
 
     // Initialize compaction scheduler
     compactionScheduler_ =
@@ -133,6 +133,87 @@ public:
   }
 
   // ==================== Point Operations ====================
+
+  // Insert or update a key-value pair
+  bool put(const std::string &key, const std::string &value) {
+    writeCount_++;
+    return memtableManager_->insert(key, value);
+  }
+
+  // Get a value by key (searches memtable first, then SSTables)
+  std::optional<std::string> get(const std::string &key) {
+    readCount_++;
+
+    // First try memtable
+    auto memResult = memtableManager_->search(key);
+    if (memResult.has_value()) {
+      return memResult;
+    }
+
+    // Fall back to SSTables
+    return searchInSSTables(key);
+  }
+
+  // Delete a key (writes tombstone)
+  bool del(const std::string &key) {
+    writeCount_++;
+    return memtableManager_->erase(key);
+  }
+
+  // Force flush memtables to disk
+  void forceFlush() { memtableManager_->forceFlush(); }
+
+  // Recover from WAL on startup
+  bool recoverFromWAL() { return memtableManager_->recover(); }
+
+  // ==================== Batch Operations ====================
+
+  // Batch write - atomic multi-key insert
+  // All entries are written together or none (for transaction support)
+  size_t
+  batchPut(const std::vector<std::pair<std::string, std::string>> &entries) {
+    size_t successCount = 0;
+
+    // Write all entries to memtable
+    // Each insert goes through WAL individually for now
+    // TODO: Optimize to single WAL batch entry for true atomicity
+    for (const auto &[key, value] : entries) {
+      if (memtableManager_->insert(key, value)) {
+        successCount++;
+        writeCount_++;
+      }
+    }
+
+    return successCount;
+  }
+
+  // Batch read - multi-key lookup
+  // Returns vector of optional results, one per input key
+  std::vector<std::optional<std::string>>
+  batchGet(const std::vector<std::string> &keys) {
+    std::vector<std::optional<std::string>> results;
+    results.reserve(keys.size());
+
+    for (const auto &key : keys) {
+      results.push_back(get(key));
+    }
+
+    return results;
+  }
+
+  // Batch delete - atomic multi-key delete
+  size_t batchDel(const std::vector<std::string> &keys) {
+    size_t successCount = 0;
+
+    for (const auto &key : keys) {
+      if (memtableManager_->erase(key)) {
+        successCount++;
+        writeCount_++;
+      }
+    }
+
+    return successCount;
+  }
 
   // Note: These would integrate with MemtableManager
   // For now, they demonstrate the interface

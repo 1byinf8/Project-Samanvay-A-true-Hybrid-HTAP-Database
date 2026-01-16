@@ -141,10 +141,20 @@ public:
     while (true) {
       bool found = find(key, preds, succs);
       if (found) {
+        Node *existing = succs[0];
         // To prevent race with erase, check if found node is marked.
-        // If not marked, it truly exists. If marked, retry.
-        if (!succs[0]->marked.load(std::memory_order_acquire)) {
-          return false; // Already exists and not marked
+        if (!existing->marked.load(std::memory_order_acquire)) {
+          // Key exists and not being deleted - check sequence number
+          if (key.seq > existing->value.seq) {
+            // UPDATE SEMANTICS: New entry has higher sequence number
+            // Update the value in place (this is safe for LSM-tree operations)
+            existing->value.value = key.value;
+            existing->value.seq = key.seq;
+            existing->value.isDeleted = key.isDeleted;
+            return true; // Updated successfully
+          }
+          // Key exists with same or higher sequence - reject
+          return false;
         }
         // If marked, another thread is erasing it, so we can retry inserting.
         continue;

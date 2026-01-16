@@ -1,0 +1,193 @@
+// storage_service.proto - gRPC service definition for StorageEngine
+// This service enables SQL parser integration via RPC calls
+
+syntax = "proto3";
+
+package storage;
+
+option cc_generic_services = true;
+
+// ==================== Request/Response Messages ====================
+
+// Single key-value pair
+message KeyValue {
+  string key = 1;
+  string value = 2;
+}
+
+// Status code matching storage::StatusCode
+enum StatusCode {
+  OK = 0;
+  CANCELLED = 1;
+  UNKNOWN = 2;
+  INVALID_ARGUMENT = 3;
+  NOT_FOUND = 5;
+  ALREADY_EXISTS = 6;
+  PERMISSION_DENIED = 7;
+  RESOURCE_EXHAUSTED = 8;
+  ABORTED = 10;
+  OUT_OF_RANGE = 11;
+  UNIMPLEMENTED = 12;
+  INTERNAL = 13;
+  UNAVAILABLE = 14;
+  DATA_LOSS = 15;
+  IO_ERROR = 100;
+  CORRUPTION = 101;
+}
+
+// Common status response
+message Status {
+  StatusCode code = 1;
+  string message = 2;
+}
+
+// ==================== Point Operations ====================
+
+// Get request - retrieve a single key
+message GetRequest {
+  string key = 1;
+}
+
+message GetResponse {
+  Status status = 1;
+  string value = 2;      // Populated if status.code == OK
+  bool found = 3;        // True if key exists
+}
+
+// Put request - insert or update a key-value pair
+message PutRequest {
+  string key = 1;
+  string value = 2;
+}
+
+message PutResponse {
+  Status status = 1;
+}
+
+// Delete request - delete a key
+message DeleteRequest {
+  string key = 1;
+}
+
+message DeleteResponse {
+  Status status = 1;
+  bool deleted = 2;      // True if key was found and deleted
+}
+
+// ==================== Batch Operations ====================
+
+// Batch get request
+message BatchGetRequest {
+  repeated string keys = 1;
+}
+
+message BatchGetResponse {
+  Status status = 1;
+  repeated KeyValue results = 2;
+  repeated string missing_keys = 3;  // Keys that were not found
+}
+
+// Batch put request
+message BatchPutRequest {
+  repeated KeyValue entries = 1;
+}
+
+message BatchPutResponse {
+  Status status = 1;
+  int32 success_count = 2;
+  int32 failure_count = 3;
+}
+
+// Batch delete request
+message BatchDeleteRequest {
+  repeated string keys = 1;
+}
+
+message BatchDeleteResponse {
+  Status status = 1;
+  int32 deleted_count = 2;
+}
+
+// ==================== Range Operations ====================
+
+// Range query request
+message RangeQueryRequest {
+  string start_key = 1;   // Inclusive
+  string end_key = 2;     // Inclusive
+  int32 limit = 3;        // Max results (0 = no limit)
+}
+
+message RangeQueryResponse {
+  Status status = 1;
+  repeated KeyValue results = 2;
+  bool has_more = 3;      // True if there are more results beyond limit
+}
+
+// ==================== Scan Operations ====================
+
+// Full scan request (for analytics)
+message ScanRequest {
+  int32 limit = 1;        // Max results (0 = no limit)
+  string start_after = 2; // For pagination, start after this key
+}
+
+message ScanResponse {
+  Status status = 1;
+  repeated KeyValue results = 2;
+  string continuation_key = 3;  // Key to use for next page
+}
+
+// ==================== Admin Operations ====================
+
+// Force flush memtables to disk
+message FlushRequest {}
+
+message FlushResponse {
+  Status status = 1;
+}
+
+// Trigger compaction
+message CompactRequest {
+  int32 level = 1;        // -1 for all levels
+}
+
+message CompactResponse {
+  Status status = 1;
+}
+
+// Get storage statistics
+message StatsRequest {}
+
+message StatsResponse {
+  Status status = 1;
+  int64 total_keys = 2;
+  int64 total_bytes = 3;
+  int64 memtable_bytes = 4;
+  int64 sstable_count = 5;
+  int64 write_count = 6;
+  int64 read_count = 7;
+}
+
+// ==================== Service Definition ====================
+
+// StorageService - main RPC interface for the storage engine
+service StorageService {
+  // Point operations
+  rpc Get(GetRequest) returns (GetResponse);
+  rpc Put(PutRequest) returns (PutResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+
+  // Batch operations
+  rpc BatchGet(BatchGetRequest) returns (BatchGetResponse);
+  rpc BatchPut(BatchPutRequest) returns (BatchPutResponse);
+  rpc BatchDelete(BatchDeleteRequest) returns (BatchDeleteResponse);
+
+  // Range operations
+  rpc RangeQuery(RangeQueryRequest) returns (RangeQueryResponse);
+  rpc Scan(ScanRequest) returns (stream ScanResponse);
+
+  // Admin operations
+  rpc Flush(FlushRequest) returns (FlushResponse);
+  rpc Compact(CompactRequest) returns (CompactResponse);
+  rpc GetStats(StatsRequest) returns (StatsResponse);
+}

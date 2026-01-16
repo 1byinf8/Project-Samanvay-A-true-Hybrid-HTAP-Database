@@ -8,11 +8,27 @@
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
+#include <iostream>
 #include <mutex>
 #include <string>
 #include <vector>
 
 namespace wal {
+
+// CRC32 polynomial (IEEE 802.3)
+constexpr uint32_t CRC32_POLYNOMIAL = 0xEDB88320;
+
+// Calculate CRC32 checksum for corruption detection
+inline uint32_t calculateCRC32(const uint8_t *data, size_t length) {
+  uint32_t crc = 0xFFFFFFFF;
+  for (size_t i = 0; i < length; ++i) {
+    crc ^= data[i];
+    for (int j = 0; j < 8; ++j) {
+      crc = (crc >> 1) ^ ((crc & 1) ? CRC32_POLYNOMIAL : 0);
+    }
+  }
+  return ~crc;
+}
 
 enum class Operation : uint8_t { INSERT = 1, DELETE = 2 };
 
@@ -74,6 +90,13 @@ private:
     }
     for (char c : entry.value) {
       buffer.push_back(static_cast<uint8_t>(c));
+    }
+
+    // Calculate and append CRC32 checksum (4 bytes)
+    uint32_t crc = calculateCRC32(buffer.data(), buffer.size());
+    for (int i = 0; i < 4; ++i) {
+      buffer.push_back(crc & 0xFF);
+      crc >>= 8;
     }
 
     return buffer;
@@ -228,6 +251,7 @@ public:
   std::vector<WALEntry> recover() {
     std::vector<WALEntry> entries;
     std::ifstream recoveryFile(filePath, std::ios::binary);
+    size_t corruptedEntries = 0;
 
     if (!recoveryFile.is_open()) {
       return entries; // No existing WAL file
@@ -242,7 +266,8 @@ public:
       }
 
       // Check for reasonable entry size (avoid reading garbage)
-      if (entrySize > 10 * 1024 * 1024) { // Max 10MB per entry
+      // Must be at least 4 bytes for CRC + minimal data
+      if (entrySize < 4 || entrySize > 10 * 1024 * 1024) {
         break;
       }
 
@@ -253,7 +278,27 @@ public:
         break;
       }
 
-      // Deserialize entry
+      // Validate CRC32 checksum (last 4 bytes of buffer)
+      if (entrySize < 4) {
+        corruptedEntries++;
+        continue;
+      }
+
+      size_t dataLen = entrySize - 4; // Exclude CRC from data
+      uint32_t storedCRC = 0;
+      for (int i = 0; i < 4; ++i) {
+        storedCRC |= static_cast<uint32_t>(buffer[dataLen + i]) << (i * 8);
+      }
+
+      uint32_t calculatedCRC = calculateCRC32(buffer.data(), dataLen);
+      if (storedCRC != calculatedCRC) {
+        corruptedEntries++;
+        std::cerr << "WAL Recovery: Skipping corrupted entry (CRC mismatch)"
+                  << std::endl;
+        continue; // Skip this corrupted entry
+      }
+
+      // Deserialize entry (excluding CRC bytes)
       size_t offset = 0;
 
       // Read sequence number (8 bytes, little endian)
@@ -278,8 +323,9 @@ public:
       }
 
       // Validate key length
-      if (keyLen > entrySize - offset) {
-        break; // Corrupted entry
+      if (keyLen > dataLen - offset) {
+        corruptedEntries++;
+        continue; // Corrupted entry
       }
 
       std::string key(reinterpret_cast<char *>(&buffer[offset]), keyLen);
@@ -292,8 +338,9 @@ public:
       }
 
       // Validate value length
-      if (valueLen > entrySize - offset) {
-        break; // Corrupted entry
+      if (valueLen > dataLen - offset) {
+        corruptedEntries++;
+        continue; // Corrupted entry
       }
 
       std::string value(reinterpret_cast<char *>(&buffer[offset]), valueLen);
@@ -302,6 +349,11 @@ public:
     }
 
     recoveryFile.close();
+
+    if (corruptedEntries > 0) {
+      std::cerr << "WAL Recovery: Skipped " << corruptedEntries
+                << " corrupted entries" << std::endl;
+    }
 
     // Sort by sequence number to ensure correct replay order
     std::sort(entries.begin(), entries.end(),

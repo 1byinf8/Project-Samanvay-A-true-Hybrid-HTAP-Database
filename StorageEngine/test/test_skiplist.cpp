@@ -202,10 +202,18 @@ void testTombstoneHandling() {
     assert(sl.search(v) == true); // Tombstones are still "present"
   }
 
-  // Add normal entries with same keys
+  // Add normal entries with same keys but HIGHER sequence number
+  // With update semantics, this should succeed (update in place)
   for (size_t i = 0; i < vals.size(); ++i) {
     Entry normal_entry(vals[i].key, "new_value_" + std::to_string(i), i + 10);
-    assert(sl.add(normal_entry) == false); // Should fail due to existing key
+    assert(sl.add(normal_entry) ==
+           true); // Should succeed - updating with higher seq
+
+    // Verify the value was updated
+    Entry result;
+    assert(sl.search(normal_entry, &result) == true);
+    assert(result.value == "new_value_" + std::to_string(i));
+    assert(result.isDeleted == false); // No longer a tombstone
   }
 
   std::cout << "testTombstoneHandling passed\n";
@@ -218,8 +226,25 @@ void testSequenceNumber() {
 
   sl.add(vals[2]); // key10, seq=3
   assert(sl.search(vals[2]) == true);
-  assert(sl.add(newer_entry) == false);   // Should fail due to existing key
-  assert(sl.search(newer_entry) == true); // Should find the original entry
+
+  // With update semantics, higher sequence number should update the value
+  assert(sl.add(newer_entry) ==
+         true); // Should succeed - updating with higher seq
+
+  // Verify the value was updated
+  Entry result;
+  assert(sl.search(newer_entry, &result) == true);
+  assert(result.value == "new_value");
+  assert(result.seq == 100);
+
+  // Try with lower sequence - should fail
+  Entry older_entry(vals[2].key, "old_value", 50);
+  assert(sl.add(older_entry) == false); // Should fail - sequence too low
+
+  // Value should still be the newer one
+  assert(sl.search(newer_entry, &result) == true);
+  assert(result.value == "new_value");
+  assert(result.seq == 100);
 
   std::cout << "testSequenceNumber passed\n";
 }

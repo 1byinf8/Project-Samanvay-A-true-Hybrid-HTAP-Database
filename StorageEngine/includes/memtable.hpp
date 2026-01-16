@@ -3,6 +3,7 @@
 #ifndef MEMTABLE_HPP
 #define MEMTABLE_HPP
 
+#include "lsm_levels.hpp"
 #include "skiplist.hpp"
 #include "sstable.hpp"
 #include "wal.hpp"
@@ -117,6 +118,8 @@ private:
   size_t sizeLimit;
   std::atomic<uint64_t> sequenceNumber{0};
   std::unique_ptr<wal::WAL> walLog;
+  std::shared_ptr<lsm::LSMTreeManager> lsmManager_;
+  std::string dataDirectory_;
 
   // Background flushing
   std::thread flushThread;
@@ -172,41 +175,79 @@ private:
       return;
     }
 
-    // Generate SSTable filename
-    std::string sstableFilename = "sstable_" +
-                                  std::to_string(table->creationTime) + "_" +
-                                  std::to_string(table->minSequence) + "_" +
-                                  std::to_string(table->maxSequence) + ".sst";
-
     // Get all entries from memtable
     auto entries = table->getAllEntries();
+    if (entries.empty()) {
+      table->markFlushed();
+      return;
+    }
 
-    if (!entries.empty()) {
-      // Create SSTable
-      sstable::SSTable sstable(sstableFilename);
+    // Generate SSTable filename using LSM manager if available
+    std::string sstableFilename;
+    if (lsmManager_) {
+      sstableFilename =
+          lsmManager_->generateSSTablePath(0); // Level 0 for fresh flushes
+    } else {
+      sstableFilename = dataDirectory_ + "/sstable_" +
+                        std::to_string(table->creationTime) + "_" +
+                        std::to_string(table->minSequence) + "_" +
+                        std::to_string(table->maxSequence) + ".sst";
+    }
 
-      if (sstable.create(entries)) {
-        // Mark table as flushed
-        table->markFlushed();
+    // Create SSTable
+    sstable::SSTable sst(sstableFilename);
+    if (sst.create(entries)) {
+      // Mark table as flushed
+      table->markFlushed();
 
-        // TODO: Update LSM levels manager
-        // TODO: Truncate WAL up to this sequence number
+      // Register with LSM manager (fixes critical issue #3)
+      if (lsmManager_) {
+        // Create SSTable metadata
+        lsm::SSTableMeta meta;
+        meta.filePath = sstableFilename;
+        meta.minKey = entries.front().first;
+        meta.maxKey = entries.back().first;
+        meta.minSequence = table->minSequence;
+        meta.maxSequence = table->maxSequence;
+        meta.fileSize = 0; // Will be updated by LSM manager if needed
+        meta.entryCount = entries.size();
+        meta.level = 0;
+        meta.creationTime = table->creationTime;
+        meta.isColumnar = false;
 
-        std::cout << "Successfully flushed memtable to " << sstableFilename
-                  << " with " << entries.size() << " entries" << std::endl;
-      } else {
-        std::cerr << "Failed to flush memtable to SSTable: " << sstableFilename
+        lsmManager_->addSSTable(meta);
+        std::cout << "Registered SSTable with LSM manager at Level 0"
                   << std::endl;
       }
+
+      // Truncate WAL up to this sequence number (fixes critical issue #2)
+      if (walLog && table->maxSequence > 0) {
+        walLog->truncate(table->maxSequence);
+        std::cout << "Truncated WAL up to sequence " << table->maxSequence
+                  << std::endl;
+      }
+
+      std::cout << "Successfully flushed memtable to " << sstableFilename
+                << " with " << entries.size() << " entries" << std::endl;
+    } else {
+      std::cerr << "Failed to flush memtable to SSTable: " << sstableFilename
+                << std::endl;
     }
   }
 
 public:
+  // Constructor with LSM manager integration for proper SSTable registration
   MemtableManager(size_t limit = 64 * 1000 * 1000,
-                  const std::string &walPath = "wal.log")
-      : sizeLimit(limit) {
+                  const std::string &walPath = "wal.log",
+                  std::shared_ptr<lsm::LSMTreeManager> lsmManager = nullptr)
+      : sizeLimit(limit), lsmManager_(lsmManager), dataDirectory_("./data") {
 
     tables.push_back(std::make_shared<Memtable>());
+
+    // Get data directory from LSM config if available
+    if (lsmManager_) {
+      dataDirectory_ = lsmManager_->getConfig().dataDirectory;
+    }
 
     // Initialize WAL
     try {
