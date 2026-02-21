@@ -41,7 +41,8 @@
         "string": "cpp",
         "string_view": "cpp",
         "variant": "cpp",
-        "algorithm": "cpp"
+        "algorithm": "cpp",
+        "cmake.cmakePath": "C:/msys64/mingw64/bin/cmake.exe"
     },
     "C_Cpp.errorSquiggles": "disabled"
 }
