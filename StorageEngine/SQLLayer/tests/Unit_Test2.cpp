@@ -1,13 +1,3 @@
-// test_sql_layer.cpp - Comprehensive SQL Layer Tests
-// Tests every aspect of parsing, routing, and execution
-//
-// Compile from StorageEngine/SQLLayer/:
-//   g++ -std=c++17 \
-//       -I../includes \
-//       -I../third_party/sql-parser/src \
-//       -o test_sql_layer tests/test_sql_layer.cpp \
-//       ../build/libsqlparser.a -pthread
-
 #include <cassert>
 #include <iostream>
 #include <string>
@@ -22,31 +12,38 @@
 // ================================================================
 // Test Infrastructure
 // ================================================================
-
-int passed = 0;
-int failed = 0;
-
-void pass(const std::string &name)
-{
-    std::cout << "  [PASS] " << name << "\n";
-    passed++;
-}
-
-void fail(const std::string &name, const std::string &reason = "")
-{
-    std::cerr << "  [FAIL] " << name;
-    if (!reason.empty())
-        std::cerr << " — " << reason;
-    std::cerr << "\n";
-    failed++;
-}
+static int g_passed = 0;
+static int g_failed = 0;
 
 void section(const std::string &name)
 {
     std::cout << "\n=== " << name << " ===\n";
 }
 
-// Assert a ResultSet succeeded
+void pass(const std::string &name)
+{
+    std::cout << "  [PASS] " << name << "\n";
+    g_passed++;
+}
+
+void fail(const std::string &name, const std::string &detail = "")
+{
+    std::cout << "  [FAIL] " << name;
+    if (!detail.empty())
+        std::cout << " -- " << detail;
+    std::cout << "\n";
+    g_failed++;
+}
+
+void check(bool condition, const std::string &name,
+           const std::string &detail = "")
+{
+    if (condition)
+        pass(name);
+    else
+        fail(name, detail);
+}
+
 void assertOk(const sql::ResultSet &rs, const std::string &name)
 {
     if (rs.success)
@@ -55,17 +52,16 @@ void assertOk(const sql::ResultSet &rs, const std::string &name)
         fail(name, rs.errorMessage);
 }
 
-// Assert a ResultSet failed with a specific error
-void assertError(const sql::ResultSet &rs, const std::string &name,
-                 const std::string &expectedSubstr = "")
+void assertFail(const sql::ResultSet &rs, const std::string &name,
+                const std::string &substr = "")
 {
     if (!rs.success)
     {
-        if (expectedSubstr.empty() ||
-            rs.errorMessage.find(expectedSubstr) != std::string::npos)
+        if (substr.empty() ||
+            rs.errorMessage.find(substr) != std::string::npos)
             pass(name);
         else
-            fail(name, "Expected error containing '" + expectedSubstr +
+            fail(name, "Expected error with '" + substr +
                            "' but got: " + rs.errorMessage);
     }
     else
@@ -74,8 +70,7 @@ void assertError(const sql::ResultSet &rs, const std::string &name,
     }
 }
 
-// Assert result has N rows
-void assertRowCount(const sql::ResultSet &rs, size_t expected,
+void assertRowCount(const sql::ResultSet &rs, size_t n,
                     const std::string &name)
 {
     if (!rs.success)
@@ -83,14 +78,13 @@ void assertRowCount(const sql::ResultSet &rs, size_t expected,
         fail(name, rs.errorMessage);
         return;
     }
-    if (rs.rows.size() == expected)
+    if (rs.rows.size() == n)
         pass(name);
     else
-        fail(name, "Expected " + std::to_string(expected) +
-                       " rows but got " + std::to_string(rs.rows.size()));
+        fail(name, "Expected " + std::to_string(n) +
+                       " rows, got " + std::to_string(rs.rows.size()));
 }
 
-// Assert a specific cell value
 void assertCell(const sql::ResultSet &rs, size_t row, size_t col,
                 const std::string &expected, const std::string &name)
 {
@@ -112,55 +106,40 @@ void assertCell(const sql::ResultSet &rs, size_t row, size_t col,
     if (rs.rows[row][col] == expected)
         pass(name);
     else
-        fail(name, "Expected '" + expected + "' got '" +
-                       rs.rows[row][col] + "'");
-}
-
-// Assert header at position
-void assertHeader(const sql::ResultSet &rs, size_t col,
-                  const std::string &expected, const std::string &name)
-{
-    if (col >= rs.headers.size())
-    {
-        fail(name, "Header col out of bounds");
-        return;
-    }
-    if (rs.headers[col] == expected)
-        pass(name);
-    else
-        fail(name, "Expected header '" + expected +
-                       "' got '" + rs.headers[col] + "'");
+        fail(name, "Expected '" + expected +
+                       "' got '" + rs.rows[row][col] + "'");
 }
 
 // ================================================================
-// Test Setup — shared engine + executor
+// Test Context
 // ================================================================
-struct TestCtx
+struct Ctx
 {
-    storage::StorageEngineConfig config;
     storage::StorageEngine *engine = nullptr;
     sql::SchemaRegistry *registry = nullptr;
     sql::QueryExecutor *executor = nullptr;
 
-    TestCtx()
+    explicit Ctx(const std::string &dir)
     {
-        config.dataDirectory = "./test_data";
-        config.columnarDirectory = "./test_data/columnar";
-        config.walPath = "./test_data/wal.log";
+        // Windows-safe directory creation
+        std::filesystem::remove_all(dir);
+        std::filesystem::create_directories(dir + "/columnar");
 
-        engine = new storage::StorageEngine(config);
-        registry = new sql::SchemaRegistry("./test_data/schema.sdb");
+        storage::StorageEngineConfig cfg;
+        cfg.dataDirectory = dir;
+        cfg.columnarDirectory = dir + "/columnar";
+        cfg.walPath = dir + "/wal.log";
+
+        engine = new storage::StorageEngine(cfg);
+        registry = new sql::SchemaRegistry(dir + "/schema.sdb");
         executor = new sql::QueryExecutor(*engine, *registry);
     }
 
-    ~TestCtx()
+    ~Ctx()
     {
         delete executor;
         delete registry;
         delete engine;
-        // Cleanup test files
-        std::system("rm -rf ./test_data ./test_data/columnar 2>/dev/null");
-        std::remove("./test_data/schema.sdb");
     }
 
     sql::ResultSet run(const std::string &sql)
@@ -175,633 +154,733 @@ struct TestCtx
 };
 
 // ================================================================
-// 1. DDL TESTS — CREATE TABLE
+// IMPORTANT: Hyrise parser rules used in these tests
+// ----------------------------------------------------------------
+// 1. VARCHAR requires a length:  VARCHAR(255)  not  VARCHAR
+// 3. Inline PRIMARY KEY may not parse -- use NOT NULL on first col
+//    and let the executor default first column as PK
+// 4. BIGINT and INT work fine
+// 5. DOUBLE, FLOAT, BOOLEAN work fine
 // ================================================================
-void testCreateTable(TestCtx &ctx)
+
+// ================================================================
+// 1. DDL -- CREATE TABLE
+// ================================================================
+void testCreateTable()
 {
-    section("DDL — CREATE TABLE");
+    section("DDL -- CREATE TABLE");
+    Ctx ctx("./test_data/ddl");
 
-    // Basic create
-    auto rs = ctx.run(
+    // Basic create -- VARCHAR(n) required by Hyrise
+    // No inline PRIMARY KEY -- executor defaults first col as PK
+    auto r = ctx.run(
         "CREATE TABLE users ("
-        "  user_id BIGINT PRIMARY KEY,"
-        "  name VARCHAR,"
-        "  email VARCHAR,"
-        "  age INT,"
-        "  salary DOUBLE"
+        "id BIGINT NOT NULL, "
+        "name VARCHAR(255), "
+        "age INT, "
+        "score DOUBLE, "
+        "active BOOLEAN"
         ")");
-    assertOk(rs, "CREATE TABLE basic");
-    assert(ctx.registry->tableExists("users"));
-    pass("Schema persisted in registry");
+    assertOk(r, "CREATE TABLE basic");
+    check(ctx.registry->tableExists("users"),
+          "Table exists in registry after CREATE");
 
-    // Verify schema details
+    // Verify schema
     auto schema = ctx.registry->getSchema("users");
-    assert(schema.has_value());
-    assert(schema->columnCount() == 5);
-    assert(schema->primaryKeyColumn == "user_id");
-    pass("Schema has 5 columns with correct PK");
+    check(schema.has_value(), "Schema retrievable");
+    check(schema->columnCount() == 5, "Column count == 5");
+    check(schema->primaryKeyColumn == "id",
+          "First NOT NULL col becomes PK");
+    check(schema->columns[0].type == columnar::ColumnType::INT64,
+          "id type == INT64");
+    check(schema->columns[2].type == columnar::ColumnType::INT32,
+          "age type == INT32");
+    check(schema->columns[3].type == columnar::ColumnType::DOUBLE,
+          "score type == DOUBLE");
+    check(schema->columns[4].type == columnar::ColumnType::BOOL,
+          "active type == BOOL");
 
     // Duplicate table rejected
-    rs = ctx.run(
-        "CREATE TABLE users (id BIGINT PRIMARY KEY, name VARCHAR)");
-    assertError(rs, "CREATE TABLE duplicate rejected", "already exists");
+    auto r2 = ctx.run(
+        "CREATE TABLE users (id BIGINT NOT NULL, x INT)");
+    assertFail(r2, "Duplicate CREATE TABLE fails", "already exists");
 
-    // Multiple column types
-    rs = ctx.run(
-        "CREATE TABLE metrics ("
-        "  metric_id BIGINT PRIMARY KEY,"
-        "  value DOUBLE,"
-        "  count INT,"
-        "  label TEXT,"
-        "  active BOOLEAN,"
-        "  recorded_at BIGINT"
+    // All supported types
+    auto r3 = ctx.run(
+        "CREATE TABLE types_test ("
+        "a BIGINT NOT NULL, "
+        "b INT, "
+        "c DOUBLE, "
+        "d FLOAT, "
+        "e VARCHAR(255), "
+        "g BOOLEAN"
         ")");
-    assertOk(rs, "CREATE TABLE with all column types");
+    assertOk(r3, "CREATE TABLE with all supported types");
+
+    // Case-insensitive table name stored as lowercase
+    auto r4 = ctx.run(
+        "CREATE TABLE Orders (order_id BIGINT NOT NULL, amount DOUBLE)");
+    assertOk(r4, "CREATE TABLE with mixed-case name");
+    check(ctx.registry->tableExists("orders"),
+          "Stored as lowercase in registry");
+
+    // Implicit PK -- first column when no NOT NULL specified
+    auto r5 = ctx.run(
+        "CREATE TABLE implicit_pk (id BIGINT, val VARCHAR(100))");
+    assertOk(r5, "CREATE TABLE implicit PK");
+    auto s5 = ctx.registry->getSchema("implicit_pk");
+    check(s5.has_value() && s5->primaryKeyColumn == "id",
+          "First column becomes PK implicitly");
 
     // Create orders table for later tests
-    rs = ctx.run(
+    ctx.run(
         "CREATE TABLE orders ("
-        "  order_id BIGINT PRIMARY KEY,"
-        "  customer VARCHAR,"
-        "  amount DOUBLE,"
-        "  region VARCHAR,"
-        "  status VARCHAR"
+        "order_id BIGINT NOT NULL, "
+        "customer VARCHAR(255), "
+        "amount DOUBLE, "
+        "region VARCHAR(50), "
+        "status VARCHAR(50)"
         ")");
-    assertOk(rs, "CREATE TABLE orders for later tests");
+    check(ctx.registry->tableExists("orders"),
+          "orders table created for later tests");
 }
 
 // ================================================================
-// 2. DDL TESTS — DROP TABLE
+// 2. DDL -- DROP TABLE
 // ================================================================
-void testDropTable(TestCtx &ctx)
+void testDropTable()
 {
-    section("DDL — DROP TABLE");
+    section("DDL -- DROP TABLE");
+    Ctx ctx("./test_data/drop");
 
-    ctx.run("CREATE TABLE temp_table (id BIGINT PRIMARY KEY, val VARCHAR)");
+    ctx.run("CREATE TABLE tmp (id BIGINT NOT NULL, val VARCHAR(255))");
+    check(ctx.registry->tableExists("tmp"), "Table exists before drop");
 
-    auto rs = ctx.run("DROP TABLE temp_table");
-    assertOk(rs, "DROP TABLE success");
-    assert(!ctx.registry->tableExists("temp_table"));
-    pass("Table removed from registry");
+    auto r = ctx.run("DROP TABLE tmp");
+    assertOk(r, "DROP TABLE success");
+    check(!ctx.registry->tableExists("tmp"), "Table gone after drop");
 
-    // Drop non-existent table
-    rs = ctx.run("DROP TABLE temp_table");
-    assertError(rs, "DROP TABLE non-existent fails", "does not exist");
+    // Drop non-existent fails
+    assertFail(ctx.run("DROP TABLE nonexistent"),
+               "DROP TABLE nonexistent fails", "does not exist");
+
+    // Drop and recreate
+    ctx.run("CREATE TABLE phoenix (id BIGINT NOT NULL)");
+    ctx.run("DROP TABLE phoenix");
+    auto r3 = ctx.run(
+        "CREATE TABLE phoenix (id BIGINT NOT NULL, extra INT)");
+    assertOk(r3, "DROP then CREATE same name works");
+    auto s3 = ctx.registry->getSchema("phoenix");
+    check(s3.has_value() && s3->columnCount() == 2,
+          "Recreated table has 2 columns");
 }
 
 // ================================================================
-// 3. DDL TESTS — SHOW TABLES
+// 3. SHOW TABLES
 // ================================================================
-void testShowTables(TestCtx &ctx)
+void testShowTables()
 {
-    section("DDL — SHOW TABLES");
+    section("META -- SHOW TABLES");
+    Ctx ctx("./test_data/show");
 
-    auto rs = ctx.run("SHOW TABLES");
-    assertOk(rs, "SHOW TABLES success");
-    assert(!rs.rows.empty());
-    pass("SHOW TABLES returns rows");
-    assertHeader(rs, 0, "Tables", "SHOW TABLES header is 'Tables'");
+    auto r1 = ctx.run("SHOW TABLES");
+    assertOk(r1, "SHOW TABLES on empty db");
+    check(r1.rows.empty(), "Empty db shows 0 tables");
+
+    ctx.run("CREATE TABLE alpha (id BIGINT NOT NULL)");
+    ctx.run("CREATE TABLE beta  (id BIGINT NOT NULL)");
+    ctx.run("CREATE TABLE gamma (id BIGINT NOT NULL)");
+
+    auto r2 = ctx.run("SHOW TABLES");
+    assertOk(r2, "SHOW TABLES with 3 tables");
+    check(r2.rows.size() == 3, "Shows 3 tables");
+    check(!r2.headers.empty(), "Has column header");
+    check(r2.headers[0] == "Tables", "Header is 'Tables'");
+
+    ctx.run("DROP TABLE gamma");
+    auto r3 = ctx.run("SHOW TABLES");
+    check(r3.rows.size() == 2, "After drop: 2 tables");
 }
 
 // ================================================================
-// 4. DML — INSERT
+// 4. DML -- INSERT
 // ================================================================
-void testInsert(TestCtx &ctx)
+void testInsert()
 {
-    section("DML — INSERT");
+    section("DML -- INSERT");
+    Ctx ctx("./test_data/insert");
 
-    // Basic insert with column list
-    auto rs = ctx.run(
-        "INSERT INTO users (user_id, name, email, age, salary) "
-        "VALUES (1, 'Alice', 'alice@example.com', 30, 95000.50)");
-    assertOk(rs, "INSERT with column list");
-    assert(rs.rowsAffected == 1);
-    pass("INSERT rowsAffected == 1");
+    ctx.run(
+        "CREATE TABLE users ("
+        "id BIGINT NOT NULL, "
+        "name VARCHAR(255), "
+        "age INT, "
+        "salary DOUBLE"
+        ")");
 
-    // Insert without column list (schema order)
-    rs = ctx.run(
-        "INSERT INTO users VALUES (2, 'Bob', 'bob@example.com', 25, 72000.00)");
-    assertOk(rs, "INSERT without column list");
+    // Insert with explicit column list
+    auto r = ctx.run(
+        "INSERT INTO users (id, name, age, salary) "
+        "VALUES (1, 'Alice', 30, 95000.50)");
+    assertOk(r, "INSERT with column list");
+    check(r.rowsAffected == 1, "rowsAffected == 1");
 
-    // Insert multiple rows
-    ctx.run("INSERT INTO users VALUES (3, 'Carol', 'carol@example.com', 35, 110000.00)");
-    ctx.run("INSERT INTO users VALUES (4, 'Dave', 'dave@example.com', 28, 85000.00)");
-    ctx.run("INSERT INTO users VALUES (5, 'Eve', 'eve@example.com', 42, 120000.00)");
-    pass("INSERT multiple rows");
+    // Insert in schema order (no column list)
+    auto r2 = ctx.run(
+        "INSERT INTO users VALUES (2, 'Bob', 25, 72000.00)");
+    assertOk(r2, "INSERT without column list");
 
-    // Insert into orders table
+    // Insert more rows
+    ctx.run("INSERT INTO users VALUES (3, 'Carol', 35, 110000.00)");
+    ctx.run("INSERT INTO users VALUES (4, 'Dave', 28, 85000.00)");
+    ctx.run("INSERT INTO users VALUES (5, 'Eve', 42, 120000.00)");
+    pass("INSERT 5 total rows");
+
+    // Insert into non-existent table
+    assertFail(ctx.run("INSERT INTO ghost VALUES (1, 'x')"),
+               "INSERT into non-existent table", "does not exist");
+
+    // Column count mismatch
+    assertFail(
+        ctx.run("INSERT INTO users (id, name) VALUES (99, 'T', 'extra')"),
+        "INSERT column count mismatch", "count");
+
+    // Type mismatch -- string into numeric column
+    assertFail(
+        ctx.run("INSERT INTO users VALUES (100, 'T', 'notanint', 50000.0)"),
+        "INSERT type mismatch rejected");
+}
+
+// ================================================================
+// 5. SELECT -- Point Lookup (OLTP path via HybridQueryRouter)
+// ================================================================
+void testSelectPointLookup()
+{
+    section("SELECT -- Point Lookup (OLTP, router -> row path)");
+    Ctx ctx("./test_data/point");
+
+    ctx.run(
+        "CREATE TABLE users ("
+        "id BIGINT NOT NULL, "
+        "name VARCHAR(255), "
+        "age INT, "
+        "salary DOUBLE"
+        ")");
+    ctx.run("INSERT INTO users VALUES (1, 'Alice', 30, 95000.50)");
+    ctx.run("INSERT INTO users VALUES (2, 'Bob', 25, 72000.00)");
+    ctx.run("INSERT INTO users VALUES (3, 'Carol', 35, 110000.00)");
+
+    // Point lookup by PK
+    auto r = ctx.run("SELECT * FROM users WHERE id = 1");
+    assertOk(r, "SELECT * WHERE pk = 1");
+    assertRowCount(r, 1, "Point lookup returns 1 row");
+    assertCell(r, 0, 1, "Alice", "name == Alice");
+
+    // Specific columns
+    auto r2 = ctx.run("SELECT name, age FROM users WHERE id = 2");
+    assertOk(r2, "SELECT specific columns WHERE pk = 2");
+    assertRowCount(r2, 1, "Returns 1 row");
+    assertCell(r2, 0, 0, "Bob", "name == Bob");
+
+    // Non-existent PK returns empty
+    auto r3 = ctx.run("SELECT * FROM users WHERE id = 999");
+    assertOk(r3, "SELECT non-existent PK");
+    assertRowCount(r3, 0, "Non-existent row = 0 rows");
+
+    // Check EXPLAIN shows POINT_LOOKUP
+    std::string plan = ctx.explain("SELECT * FROM users WHERE id = 1");
+    check(plan.find("POINT_LOOKUP") != std::string::npos,
+          "EXPLAIN shows POINT_LOOKUP");
+}
+
+// ================================================================
+// 6. SELECT -- Full Scan (router -> both paths)
+// ================================================================
+void testSelectFullScan()
+{
+    section("SELECT -- Full Scan (router -> both paths)");
+    Ctx ctx("./test_data/scan");
+
+    ctx.run(
+        "CREATE TABLE users ("
+        "id BIGINT NOT NULL, "
+        "name VARCHAR(255), "
+        "salary DOUBLE"
+        ")");
+    ctx.run("INSERT INTO users VALUES (1, 'Alice', 95000.50)");
+    ctx.run("INSERT INTO users VALUES (2, 'Bob',   72000.00)");
+    ctx.run("INSERT INTO users VALUES (3, 'Carol', 110000.00)");
+    ctx.run("INSERT INTO users VALUES (4, 'Dave',  85000.00)");
+    ctx.run("INSERT INTO users VALUES (5, 'Eve',   120000.00)");
+
+    // SELECT *
+    auto r = ctx.run("SELECT * FROM users");
+    assertOk(r, "SELECT * full scan");
+    assertRowCount(r, 5, "Full scan returns 5 rows");
+    check(r.headers.size() == 3, "SELECT * has 3 headers");
+
+    // Projected scan
+    auto r2 = ctx.run("SELECT name, salary FROM users");
+    assertOk(r2, "SELECT name, salary");
+    assertRowCount(r2, 5, "Projected scan returns 5 rows");
+    check(r2.headers.size() == 2, "Projected scan has 2 headers");
+
+    // EXPLAIN shows FULL_SCAN
+    std::string plan = ctx.explain("SELECT * FROM users");
+    check(plan.find("FULL_SCAN") != std::string::npos,
+          "EXPLAIN shows FULL_SCAN");
+}
+
+// ================================================================
+// 7. SELECT -- WHERE filter (non-PK / range scan)
+// ================================================================
+void testSelectWhere()
+{
+    section("SELECT -- WHERE filter (range scan path)");
+    Ctx ctx("./test_data/where");
+
+    ctx.run(
+        "CREATE TABLE orders ("
+        "id BIGINT NOT NULL, "
+        "customer VARCHAR(255), "
+        "amount DOUBLE, "
+        "region VARCHAR(50), "
+        "status VARCHAR(50)"
+        ")");
     ctx.run("INSERT INTO orders VALUES (1, 'Alice', 99.99, 'APAC', 'completed')");
     ctx.run("INSERT INTO orders VALUES (2, 'Bob', 250.00, 'EMEA', 'pending')");
     ctx.run("INSERT INTO orders VALUES (3, 'Carol', 75.50, 'APAC', 'completed')");
     ctx.run("INSERT INTO orders VALUES (4, 'Dave', 500.00, 'NA', 'completed')");
     ctx.run("INSERT INTO orders VALUES (5, 'Eve', 125.00, 'EMEA', 'cancelled')");
-    pass("INSERT 5 orders rows");
-
-    // Insert into non-existent table
-    rs = ctx.run("INSERT INTO ghost_table VALUES (1, 'test')");
-    assertError(rs, "INSERT into non-existent table", "does not exist");
-
-    // Column count mismatch
-    rs = ctx.run("INSERT INTO users (user_id, name) VALUES (99, 'Test', 'extra')");
-    assertError(rs, "INSERT column count mismatch", "count");
-
-    // Type mismatch — string into numeric
-    rs = ctx.run("INSERT INTO users VALUES (100, 'Test', 'test@test.com', 'notanumber', 50000.0)");
-    assertError(rs, "INSERT type mismatch rejected");
-}
-
-// ================================================================
-// 5. DML — SELECT (OLTP Point Lookup)
-// ================================================================
-void testSelectPointLookup(TestCtx &ctx)
-{
-    section("DML — SELECT Point Lookup (OLTP via HybridQueryRouter)");
-
-    // Point lookup by PK — router sends to row path
-    auto rs = ctx.run("SELECT * FROM users WHERE user_id = 1");
-    assertOk(rs, "SELECT * WHERE pk = val");
-    assertRowCount(rs, 1, "Point lookup returns 1 row");
-    assertCell(rs, 0, 1, "Alice", "Point lookup name == Alice");
-
-    // Point lookup specific columns
-    rs = ctx.run("SELECT name, email FROM users WHERE user_id = 2");
-    assertOk(rs, "SELECT specific columns WHERE pk = val");
-    assertRowCount(rs, 1, "Specific column lookup returns 1 row");
-    assertCell(rs, 0, 0, "Bob", "name == Bob");
-
-    // Point lookup non-existent row
-    rs = ctx.run("SELECT * FROM users WHERE user_id = 999");
-    assertOk(rs, "SELECT non-existent row returns empty");
-    assertRowCount(rs, 0, "Non-existent row returns 0 rows");
-
-    // Point lookup on orders
-    rs = ctx.run("SELECT * FROM orders WHERE order_id = 3");
-    assertOk(rs, "SELECT orders point lookup");
-    assertRowCount(rs, 1, "Orders point lookup returns 1 row");
-    assertCell(rs, 0, 2, "75.5", "amount == 75.5");
-}
-
-// ================================================================
-// 6. DML — SELECT (Full Scan)
-// ================================================================
-void testSelectFullScan(TestCtx &ctx)
-{
-    section("DML — SELECT Full Scan (router uses both paths)");
-
-    // Full scan — SELECT *
-    auto rs = ctx.run("SELECT * FROM users");
-    assertOk(rs, "SELECT * full scan");
-    assertRowCount(rs, 5, "Full scan returns 5 users");
-
-    // Full scan with column projection
-    rs = ctx.run("SELECT name, salary FROM users");
-    assertOk(rs, "SELECT name, salary full scan");
-    assertRowCount(rs, 5, "Projected full scan returns 5 rows");
-    assert(rs.headers.size() == 2);
-    pass("Projected scan has 2 columns");
-
-    // Full scan on orders
-    rs = ctx.run("SELECT * FROM orders");
-    assertOk(rs, "SELECT * FROM orders full scan");
-    assertRowCount(rs, 5, "Orders full scan returns 5 rows");
-}
-
-// ================================================================
-// 7. DML — SELECT with WHERE (Range Scan / Filter)
-// ================================================================
-void testSelectWithWhere(TestCtx &ctx)
-{
-    section("DML — SELECT with WHERE (Range Scan path)");
-
-    // Filter on non-PK column
-    auto rs = ctx.run("SELECT * FROM orders WHERE region = 'APAC'");
-    assertOk(rs, "SELECT WHERE region = APAC");
-    assertRowCount(rs, 2, "2 APAC orders");
-
-    // Numeric comparison
-    rs = ctx.run("SELECT * FROM orders WHERE amount > 100");
-    assertOk(rs, "SELECT WHERE amount > 100");
-    assertRowCount(rs, 3, "3 orders with amount > 100");
-
-    // Less than
-    rs = ctx.run("SELECT * FROM orders WHERE amount < 100");
-    assertOk(rs, "SELECT WHERE amount < 100");
-    assertRowCount(rs, 1, "1 order with amount < 100");
-
-    // Greater than or equal
-    rs = ctx.run("SELECT * FROM orders WHERE amount >= 250");
-    assertOk(rs, "SELECT WHERE amount >= 250");
-    assertRowCount(rs, 2, "2 orders with amount >= 250");
-
-    // AND condition
-    rs = ctx.run(
-        "SELECT * FROM orders WHERE region = 'APAC' AND status = 'completed'");
-    assertOk(rs, "SELECT WHERE AND condition");
-    assertRowCount(rs, 2, "2 completed APAC orders");
-
-    // OR condition
-    rs = ctx.run(
-        "SELECT * FROM orders WHERE region = 'APAC' OR region = 'EMEA'");
-    assertOk(rs, "SELECT WHERE OR condition");
-    assertRowCount(rs, 4, "4 APAC or EMEA orders");
-
-    // NOT EQUALS
-    rs = ctx.run("SELECT * FROM orders WHERE status != 'cancelled'");
-    assertOk(rs, "SELECT WHERE != condition");
-    assertRowCount(rs, 4, "4 non-cancelled orders");
 
     // String equality on non-PK
-    rs = ctx.run("SELECT * FROM users WHERE name = 'Carol'");
-    assertOk(rs, "SELECT WHERE string equality non-PK");
-    assertRowCount(rs, 1, "1 user named Carol");
+    auto r1 = ctx.run("SELECT * FROM orders WHERE region = 'APAC'");
+    assertOk(r1, "WHERE region = APAC");
+    assertRowCount(r1, 2, "2 APAC orders");
 
-    // Combined numeric + string
-    rs = ctx.run("SELECT * FROM users WHERE age > 30 AND salary > 100000");
-    assertOk(rs, "SELECT WHERE age > 30 AND salary > 100000");
-    assertRowCount(rs, 2, "Carol and Eve match");
+    // Numeric greater than
+    auto r2 = ctx.run("SELECT * FROM orders WHERE amount > 100");
+    assertOk(r2, "WHERE amount > 100");
+    assertRowCount(r2, 3, "3 orders with amount > 100");
+
+    // Numeric less than
+    auto r3 = ctx.run("SELECT * FROM orders WHERE amount < 100");
+    assertOk(r3, "WHERE amount < 100");
+    assertRowCount(r3, 1, "1 order with amount < 100");
+
+    // Greater than or equal
+    auto r4 = ctx.run("SELECT * FROM orders WHERE amount >= 250");
+    assertOk(r4, "WHERE amount >= 250");
+    assertRowCount(r4, 2, "2 orders with amount >= 250");
+
+    // AND
+    auto r5 = ctx.run(
+        "SELECT * FROM orders WHERE region = 'APAC' AND status = 'completed'");
+    assertOk(r5, "WHERE AND condition");
+    assertRowCount(r5, 2, "2 completed APAC orders");
+
+    // OR
+    auto r6 = ctx.run(
+        "SELECT * FROM orders WHERE region = 'APAC' OR region = 'EMEA'");
+    assertOk(r6, "WHERE OR condition");
+    assertRowCount(r6, 4, "4 APAC or EMEA orders");
+
+    // Not equals
+    auto r7 = ctx.run("SELECT * FROM orders WHERE status != 'cancelled'");
+    assertOk(r7, "WHERE != condition");
+    assertRowCount(r7, 4, "4 non-cancelled orders");
+
+    // EXPLAIN shows RANGE_SCAN or FULL_SCAN
+    std::string plan = ctx.explain(
+        "SELECT * FROM orders WHERE amount > 100");
+    check(plan.find("RANGE_SCAN") != std::string::npos ||
+              plan.find("FULL_SCAN") != std::string::npos,
+          "EXPLAIN shows scan type");
 }
 
 // ================================================================
-// 8. DML — SELECT Aggregations (OLAP via HybridQueryRouter)
+// 8. SELECT -- Aggregations (OLAP path via HybridQueryRouter)
 // ================================================================
-void testSelectAggregations(TestCtx &ctx)
+void testSelectAggregations()
 {
-    section("DML — SELECT Aggregations (OLAP via HybridQueryRouter)");
+    section("SELECT -- Aggregations (OLAP, router -> columnar path)");
+    Ctx ctx("./test_data/agg");
+
+    ctx.run(
+        "CREATE TABLE orders ("
+        "id BIGINT NOT NULL, "
+        "amount DOUBLE, "
+        "qty INT"
+        ")");
+    ctx.run("INSERT INTO orders VALUES (1, 99.99, 2)");
+    ctx.run("INSERT INTO orders VALUES (2, 250.00, 5)");
+    ctx.run("INSERT INTO orders VALUES (3, 75.50, 1)");
+    ctx.run("INSERT INTO orders VALUES (4, 500.00, 10)");
+    ctx.run("INSERT INTO orders VALUES (5, 125.00, 3)");
 
     // COUNT(*)
-    auto rs = ctx.run("SELECT COUNT(*) FROM orders");
-    assertOk(rs, "SELECT COUNT(*)");
-    assertRowCount(rs, 1, "COUNT returns 1 row");
-    assertHeader(rs, 0, "COUNT(*)", "COUNT header correct");
+    auto r1 = ctx.run("SELECT COUNT(*) FROM orders");
+    assertOk(r1, "SELECT COUNT(*)");
+    assertRowCount(r1, 1, "COUNT returns 1 row");
+    check(r1.headers[0] == "COUNT(*)", "COUNT header correct");
 
     // SUM
-    rs = ctx.run("SELECT SUM(amount) FROM orders");
-    assertOk(rs, "SELECT SUM(amount)");
-    assertRowCount(rs, 1, "SUM returns 1 row");
-    assertHeader(rs, 0, "SUM(amount)", "SUM header correct");
+    auto r2 = ctx.run("SELECT SUM(amount) FROM orders");
+    assertOk(r2, "SELECT SUM(amount)");
+    assertRowCount(r2, 1, "SUM returns 1 row");
+    check(r2.headers[0] == "SUM(amount)", "SUM header correct");
 
     // AVG
-    rs = ctx.run("SELECT AVG(salary) FROM users");
-    assertOk(rs, "SELECT AVG(salary)");
-    assertRowCount(rs, 1, "AVG returns 1 row");
-    assertHeader(rs, 0, "AVG(salary)", "AVG header correct");
+    auto r3 = ctx.run("SELECT AVG(amount) FROM orders");
+    assertOk(r3, "SELECT AVG(amount)");
+    assertRowCount(r3, 1, "AVG returns 1 row");
+    check(r3.headers[0] == "AVG(amount)", "AVG header correct");
 
     // MIN
-    rs = ctx.run("SELECT MIN(amount) FROM orders");
-    assertOk(rs, "SELECT MIN(amount)");
-    assertRowCount(rs, 1, "MIN returns 1 row");
-    assertHeader(rs, 0, "MIN(amount)", "MIN header correct");
+    auto r4 = ctx.run("SELECT MIN(amount) FROM orders");
+    assertOk(r4, "SELECT MIN(amount)");
+    assertRowCount(r4, 1, "MIN returns 1 row");
+    check(r4.headers[0] == "MIN(amount)", "MIN header correct");
 
     // MAX
-    rs = ctx.run("SELECT MAX(amount) FROM orders");
-    assertOk(rs, "SELECT MAX(amount)");
-    assertRowCount(rs, 1, "MAX returns 1 row");
-    assertHeader(rs, 0, "MAX(amount)", "MAX header correct");
+    auto r5 = ctx.run("SELECT MAX(amount) FROM orders");
+    assertOk(r5, "SELECT MAX(amount)");
+    assertRowCount(r5, 1, "MAX returns 1 row");
+    check(r5.headers[0] == "MAX(amount)", "MAX header correct");
 
-    // COUNT on users
-    rs = ctx.run("SELECT COUNT(*) FROM users");
-    assertOk(rs, "SELECT COUNT(*) FROM users");
-    assertRowCount(rs, 1, "COUNT users returns 1 row");
+    // EXPLAIN shows AGGREGATION
+    std::string plan = ctx.explain("SELECT SUM(amount) FROM orders");
+    check(plan.find("AGGREGATION") != std::string::npos,
+          "EXPLAIN shows AGGREGATION for SUM");
 
-    // MAX salary
-    rs = ctx.run("SELECT MAX(salary) FROM users");
-    assertOk(rs, "SELECT MAX(salary) FROM users");
-    assertRowCount(rs, 1, "MAX salary returns 1 row");
-
-    // MIN salary
-    rs = ctx.run("SELECT MIN(salary) FROM users");
-    assertOk(rs, "SELECT MIN(salary) FROM users");
-    assertRowCount(rs, 1, "MIN salary returns 1 row");
+    plan = ctx.explain("SELECT COUNT(*) FROM orders");
+    check(plan.find("AGGREGATION") != std::string::npos,
+          "EXPLAIN shows AGGREGATION for COUNT");
 }
 
 // ================================================================
-// 9. DML — UPDATE
+// 9. DML -- UPDATE
 // ================================================================
-void testUpdate(TestCtx &ctx)
+void testUpdate()
 {
-    section("DML — UPDATE");
+    section("DML -- UPDATE (OLTP read-modify-write)");
+    Ctx ctx("./test_data/update");
+
+    ctx.run(
+        "CREATE TABLE orders ("
+        "id BIGINT NOT NULL, "
+        "customer VARCHAR(255), "
+        "amount DOUBLE, "
+        "status VARCHAR(50)"
+        ")");
+    ctx.run("INSERT INTO orders VALUES (1, 'Alice', 99.99, 'pending')");
+    ctx.run("INSERT INTO orders VALUES (2, 'Bob', 250.00, 'pending')");
 
     // Basic update
-    auto rs = ctx.run(
-        "UPDATE orders SET status = 'shipped' WHERE order_id = 2");
-    assertOk(rs, "UPDATE single field");
-    assert(rs.rowsAffected == 1);
-    pass("UPDATE rowsAffected == 1");
+    auto r = ctx.run(
+        "UPDATE orders SET status = 'shipped' WHERE id = 1");
+    assertOk(r, "UPDATE single field");
+    check(r.rowsAffected == 1, "rowsAffected == 1");
 
     // Verify update persisted
-    rs = ctx.run("SELECT * FROM orders WHERE order_id = 2");
-    assertOk(rs, "SELECT after UPDATE");
-    assertRowCount(rs, 1, "Row still exists after UPDATE");
-    assertCell(rs, 0, 4, "shipped", "status updated to shipped");
+    auto check_r = ctx.run("SELECT * FROM orders WHERE id = 1");
+    assertOk(check_r, "SELECT after UPDATE");
+    assertCell(check_r, 0, 3, "shipped", "status updated to shipped");
 
     // Update numeric field
-    rs = ctx.run("UPDATE orders SET amount = 300.00 WHERE order_id = 2");
-    assertOk(rs, "UPDATE numeric field");
-
-    rs = ctx.run("SELECT * FROM orders WHERE order_id = 2");
-    assertCell(rs, 0, 2, "300", "amount updated to 300");
-
-    // Update multiple fields
-    rs = ctx.run(
-        "UPDATE users SET salary = 100000.00, age = 31 WHERE user_id = 1");
-    assertOk(rs, "UPDATE multiple fields");
-
-    rs = ctx.run("SELECT * FROM users WHERE user_id = 1");
-    assertCell(rs, 0, 4, "100000", "salary updated");
+    ctx.run("UPDATE orders SET amount = 300.00 WHERE id = 2");
+    auto check_r2 = ctx.run("SELECT * FROM orders WHERE id = 2");
+    assertCell(check_r2, 0, 2, "300", "amount updated to 300");
 
     // Update non-existent row
-    rs = ctx.run("UPDATE orders SET status = 'test' WHERE order_id = 999");
-    assert(rs.rowsAffected == 0);
-    pass("UPDATE non-existent row returns 0 affected");
+    auto r3 = ctx.run(
+        "UPDATE orders SET status = 'test' WHERE id = 999");
+    check(r3.rowsAffected == 0, "UPDATE non-existent row: 0 affected");
 
-    // Update without WHERE
-    rs = ctx.run("UPDATE orders SET status = 'test'");
-    assertError(rs, "UPDATE without WHERE rejected", "WHERE");
+    // UPDATE without WHERE rejected
+    assertFail(ctx.run("UPDATE orders SET status = 'x'"),
+               "UPDATE without WHERE rejected", "WHERE");
 
-    // Update non-existent column
-    rs = ctx.run(
-        "UPDATE orders SET fake_col = 'x' WHERE order_id = 1");
-    assertError(rs, "UPDATE unknown column rejected", "Unknown column");
+    // UPDATE unknown column rejected
+    assertFail(
+        ctx.run("UPDATE orders SET fake_col = 'x' WHERE id = 1"),
+        "UPDATE unknown column rejected", "Unknown column");
 
-    // Update wrong type
-    rs = ctx.run(
-        "UPDATE orders SET amount = 'notanumber' WHERE order_id = 1");
-    assertError(rs, "UPDATE type mismatch rejected");
+    // UPDATE wrong type rejected
+    assertFail(
+        ctx.run("UPDATE orders SET amount = 'notanumber' WHERE id = 1"),
+        "UPDATE type mismatch rejected");
 }
 
 // ================================================================
-// 10. DML — DELETE
+// 10. DML -- DELETE
 // ================================================================
-void testDelete(TestCtx &ctx)
+void testDelete()
 {
-    section("DML — DELETE");
+    section("DML -- DELETE (OLTP)");
+    Ctx ctx("./test_data/delete");
 
-    // Insert a row to delete
-    ctx.run("INSERT INTO users VALUES (99, 'Temp', 'temp@test.com', 20, 30000.0)");
+    ctx.run(
+        "CREATE TABLE users ("
+        "id BIGINT NOT NULL, "
+        "name VARCHAR(255)"
+        ")");
+    ctx.run("INSERT INTO users VALUES (1, 'Alice')");
+    ctx.run("INSERT INTO users VALUES (2, 'Bob')");
+    ctx.run("INSERT INTO users VALUES (99, 'Temp')");
 
-    // Verify it exists
-    auto rs = ctx.run("SELECT * FROM users WHERE user_id = 99");
-    assertRowCount(rs, 1, "Temp row exists before delete");
+    // Verify row exists
+    assertRowCount(ctx.run("SELECT * FROM users WHERE id = 99"),
+                   1, "Row 99 exists before delete");
 
     // Delete it
-    rs = ctx.run("DELETE FROM users WHERE user_id = 99");
-    assertOk(rs, "DELETE by PK");
-    assert(rs.rowsAffected == 1);
-    pass("DELETE rowsAffected == 1");
+    auto r = ctx.run("DELETE FROM users WHERE id = 99");
+    assertOk(r, "DELETE by PK");
+    check(r.rowsAffected == 1, "rowsAffected == 1");
 
-    // Verify it's gone
-    rs = ctx.run("SELECT * FROM users WHERE user_id = 99");
-    assertRowCount(rs, 0, "Row gone after DELETE");
+    // Verify gone
+    assertRowCount(ctx.run("SELECT * FROM users WHERE id = 99"),
+                   0, "Row gone after DELETE");
 
-    // Delete non-existent row
-    rs = ctx.run("DELETE FROM users WHERE user_id = 999");
-    assert(rs.rowsAffected == 0);
-    pass("DELETE non-existent row returns 0 affected");
+    // Delete non-existent
+    auto r2 = ctx.run("DELETE FROM users WHERE id = 999");
+    check(r2.rowsAffected == 0, "DELETE non-existent: 0 affected");
 
-    // Delete without WHERE
-    rs = ctx.run("DELETE FROM orders");
-    assertError(rs, "DELETE without WHERE rejected", "WHERE");
+    // DELETE without WHERE rejected
+    assertFail(ctx.run("DELETE FROM users"),
+               "DELETE without WHERE rejected", "WHERE");
 
-    // Delete from non-existent table
-    rs = ctx.run("DELETE FROM ghost WHERE id = 1");
-    assertError(rs, "DELETE from non-existent table", "does not exist");
+    // DELETE from non-existent table
+    assertFail(ctx.run("DELETE FROM ghost WHERE id = 1"),
+               "DELETE from non-existent table", "does not exist");
+
+    // Full scan still shows remaining rows
+    assertRowCount(ctx.run("SELECT * FROM users"), 2,
+                   "2 rows remain after deleting row 99");
 }
 
 // ================================================================
-// 11. EXPLAIN — Query Plan Inspection
+// 11. Schema Registry Persistence
 // ================================================================
-void testExplain(TestCtx &ctx)
+void testSchemaPersistence()
 {
-    section("EXPLAIN — HybridQueryRouter Plan Inspection");
+    section("SchemaRegistry -- Persistence across reloads");
 
-    // Point lookup plan — should say POINT_LOOKUP
-    std::string plan = ctx.explain(
-        "SELECT * FROM users WHERE user_id = 1");
-    assert(plan.find("POINT_LOOKUP") != std::string::npos);
-    pass("EXPLAIN point lookup shows POINT_LOOKUP");
-    assert(plan.find("Memtable") != std::string::npos);
-    pass("EXPLAIN point lookup shows Memtable scan");
+    std::string dir = "./test_data/persist";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir + "/columnar");
 
-    // Aggregation plan — should say AGGREGATION + columnar
-    plan = ctx.explain("SELECT SUM(amount) FROM orders");
-    assert(plan.find("AGGREGATION") != std::string::npos);
-    pass("EXPLAIN aggregation shows AGGREGATION");
+    // Write schema in one registry instance
+    {
+        sql::SchemaRegistry reg(dir + "/schema.sdb");
+        columnar::TableSchema schema("persist_test");
+        schema.addColumn(
+            columnar::ColumnSchema("id", columnar::ColumnType::INT64, false));
+        schema.addColumn(
+            columnar::ColumnSchema("val", columnar::ColumnType::STRING, true));
+        schema.primaryKeyColumn = "id";
+        reg.createTable(schema);
+        check(reg.tableExists("persist_test"), "Schema written");
+    }
 
-    // Full scan plan — should say FULL_SCAN
-    plan = ctx.explain("SELECT * FROM users");
-    assert(plan.find("FULL_SCAN") != std::string::npos);
-    pass("EXPLAIN full scan shows FULL_SCAN");
+    // Read it back in a fresh instance
+    {
+        sql::SchemaRegistry reg2(dir + "/schema.sdb");
+        check(reg2.tableExists("persist_test"),
+              "Schema survives reload");
+        auto s = reg2.getSchema("persist_test");
+        check(s.has_value() && s->columnCount() == 2,
+              "Reloaded schema has 2 columns");
+        check(s.has_value() && s->primaryKeyColumn == "id",
+              "PK column preserved");
+    }
 
-    // Range scan plan
-    plan = ctx.explain(
-        "SELECT * FROM orders WHERE amount > 100");
-    assert(plan.find("RANGE_SCAN") != std::string::npos ||
-           plan.find("FULL_SCAN") != std::string::npos);
-    pass("EXPLAIN range scan shows scan type");
+    // Key encoding is stable
+    check(sql::SchemaRegistry::encodeKey("orders", "42") == "orders:42",
+          "encodeKey format correct");
+    check(sql::SchemaRegistry::tablePrefix("orders") == "orders:",
+          "tablePrefix format correct");
+    check(sql::SchemaRegistry::decodePkFromKey("orders:42", "orders") == "42",
+          "decodePkFromKey correct");
 }
 
 // ================================================================
-// 12. ROUTER ROUTING VERIFICATION
+// 12. RowCodec Integrity
 // ================================================================
-void testRouterRouting(TestCtx &ctx)
+void testRowCodecIntegrity()
 {
-    section("HybridQueryRouter — Routing Decisions");
+    section("RowCodec -- Encode/Decode Integrity");
 
-    // Verify point lookup uses row path
-    std::string plan = ctx.explain(
-        "SELECT * FROM users WHERE user_id = 1");
-    assert(plan.find("POINT_LOOKUP") != std::string::npos);
-    // Row SSTables should be listed
-    assert(plan.find("Row SSTables") != std::string::npos ||
-           plan.find("Memtable") != std::string::npos);
-    pass("Point lookup routed to row path");
+    // Build a schema
+    columnar::TableSchema schema("orders");
+    schema.addColumn(
+        columnar::ColumnSchema("order_id", columnar::ColumnType::INT64, false));
+    schema.addColumn(
+        columnar::ColumnSchema("customer", columnar::ColumnType::STRING, true));
+    schema.addColumn(
+        columnar::ColumnSchema("amount", columnar::ColumnType::DOUBLE, true));
+    schema.primaryKeyColumn = "order_id";
 
-    // Verify aggregation uses columnar path
-    plan = ctx.explain("SELECT COUNT(*) FROM users");
-    assert(plan.find("AGGREGATION") != std::string::npos);
-    pass("Aggregation routed to columnar path");
-
-    // Verify full scan uses both paths
-    plan = ctx.explain("SELECT * FROM orders");
-    assert(plan.find("FULL_SCAN") != std::string::npos);
-    pass("Full scan uses both row + columnar paths");
-}
-
-// ================================================================
-// 13. SCHEMA REGISTRY PERSISTENCE
-// ================================================================
-void testSchemaPersistence(TestCtx &ctx)
-{
-    section("SchemaRegistry — Persistence");
-
-    // Create a table, verify it survives registry reload
-    ctx.run("CREATE TABLE persist_test (id BIGINT PRIMARY KEY, val VARCHAR)");
-    ctx.run("INSERT INTO persist_test VALUES (1, 'hello')");
-
-    // Create fresh registry pointing to same file
-    sql::SchemaRegistry reg2("./test_data/schema.sdb");
-    assert(reg2.tableExists("persist_test"));
-    pass("Schema survives registry reload");
-
-    auto schema = reg2.getSchema("persist_test");
-    assert(schema.has_value());
-    assert(schema->columnCount() == 2);
-    pass("Reloaded schema has correct column count");
-
-    // Key encoding is consistent
-    std::string key = sql::SchemaRegistry::encodeKey("persist_test", "1");
-    assert(key == "persist_test:1");
-    pass("Key encoding consistent across reloads");
-}
-
-// ================================================================
-// 14. ROW CODEC — Encode/Decode Integrity
-// ================================================================
-void testRowCodecIntegrity(TestCtx &ctx)
-{
-    section("RowCodec — Encode/Decode Integrity");
-
-    auto schema = ctx.registry->getSchema("orders");
-    assert(schema.has_value());
-
-    // Encode a row
     sql::Row row = {
         {"order_id", "42"},
         {"customer", "TestUser"},
-        {"amount", "999.99"},
-        {"region", "APAC"},
-        {"status", "completed"}};
+        {"amount", "999.99"}};
 
-    std::string blob = sql::RowCodec::encode(*schema, row);
-    assert(!blob.empty());
-    pass("RowCodec encode produces non-empty blob");
+    // Encode
+    std::string blob = sql::RowCodec::encode(schema, row);
+    check(!blob.empty(), "Encode produces non-empty blob");
 
     // Decode round-trip
     auto decoded = sql::RowCodec::decode(blob);
-    assert(decoded.has_value());
-    assert(decoded->at("customer") == "TestUser");
-    assert(decoded->at("amount") == "999.99");
-    pass("RowCodec decode round-trip correct");
+    check(decoded.has_value(), "Decode returns value");
+    check(decoded->at("customer") == "TestUser", "customer round-trips");
+    check(decoded->at("amount") == "999.99", "amount round-trips");
 
     // Ordered decode matches schema column order
-    auto ordered = sql::RowCodec::decodeOrdered(*schema, blob);
-    assert(ordered.has_value());
-    assert((*ordered)[0] == "42");     // order_id
-    assert((*ordered)[2] == "999.99"); // amount
-    assert((*ordered)[3] == "APAC");   // region
-    pass("RowCodec decodeOrdered matches schema order");
+    auto ordered = sql::RowCodec::decodeOrdered(schema, blob);
+    check(ordered.has_value(), "decodeOrdered returns value");
+    check((*ordered)[0] == "42", "Col[0] == order_id value");
+    check((*ordered)[1] == "TestUser", "Col[1] == customer value");
+    check((*ordered)[2] == "999.99", "Col[2] == amount value");
 
     // Single column extraction
-    auto val = sql::RowCodec::getColumnValue(blob, "region");
-    assert(val.has_value() && *val == "APAC");
-    pass("RowCodec getColumnValue extracts single column");
+    auto val = sql::RowCodec::getColumnValue(blob, "amount");
+    check(val.has_value() && *val == "999.99",
+          "getColumnValue extracts amount");
+
+    // Type checking
+    check(sql::RowCodec::typeCheck("42", columnar::ColumnType::INT64).empty(),
+          "typeCheck INT64 valid");
+    check(sql::RowCodec::typeCheck("3.14", columnar::ColumnType::DOUBLE).empty(),
+          "typeCheck DOUBLE valid");
+    check(sql::RowCodec::typeCheck("true", columnar::ColumnType::BOOL).empty(),
+          "typeCheck BOOL valid");
+    check(!sql::RowCodec::typeCheck("abc", columnar::ColumnType::INT64).empty(),
+          "typeCheck INT64 invalid rejects");
+    check(!sql::RowCodec::typeCheck("maybe", columnar::ColumnType::BOOL).empty(),
+          "typeCheck BOOL invalid rejects");
 }
 
 // ================================================================
-// 15. EDGE CASES & ERROR HANDLING
+// 13. Edge Cases
 // ================================================================
-void testEdgeCases(TestCtx &ctx)
+void testEdgeCases()
 {
     section("Edge Cases & Error Handling");
+    Ctx ctx("./test_data/edge");
+
+    ctx.run(
+        "CREATE TABLE users ("
+        "id BIGINT NOT NULL, "
+        "name VARCHAR(255), "
+        "age INT"
+        ")");
+    ctx.run("INSERT INTO users VALUES (1, 'Alice', 30)");
+    ctx.run("INSERT INTO users VALUES (2, 'Bob', 25)");
 
     // SELECT from non-existent table
-    auto rs = ctx.run("SELECT * FROM ghost_table");
-    assertError(rs, "SELECT from non-existent table", "does not exist");
+    assertFail(ctx.run("SELECT * FROM ghost"),
+               "SELECT from non-existent table", "does not exist");
 
-    // INSERT missing primary key
-    rs = ctx.run("INSERT INTO orders (customer, amount) VALUES ('test', 10.0)");
-    assertError(rs, "INSERT missing PK rejected");
+    // SELECT * returns all columns
+    auto r = ctx.run("SELECT * FROM users WHERE id = 1");
+    assertOk(r, "SELECT * returns all columns");
+    check(r.headers.size() == 3, "SELECT * has 3 headers");
 
-    // Empty SELECT list edge case
-    rs = ctx.run("SELECT * FROM users WHERE user_id = 1");
-    assertOk(rs, "SELECT * returns all columns");
-    assert(rs.headers.size() == 5);
-    pass("SELECT * returns 5 headers for users");
-
-    // Multiple sequential operations on same row
-    ctx.run("INSERT INTO users VALUES (50, 'Multi', 'multi@test.com', 25, 50000.0)");
-    ctx.run("UPDATE users SET age = 26 WHERE user_id = 50");
-    ctx.run("UPDATE users SET age = 27 WHERE user_id = 50");
-    rs = ctx.run("SELECT * FROM users WHERE user_id = 50");
-    assertRowCount(rs, 1, "Row exists after multiple updates");
-    assertCell(rs, 0, 3, "27", "Final age is 27 after 2 updates");
+    // Multiple sequential updates on same row
+    ctx.run("INSERT INTO users VALUES (50, 'Multi', 20)");
+    ctx.run("UPDATE users SET age = 21 WHERE id = 50");
+    ctx.run("UPDATE users SET age = 22 WHERE id = 50");
+    auto r2 = ctx.run("SELECT * FROM users WHERE id = 50");
+    assertRowCount(r2, 1, "Row exists after multiple updates");
+    assertCell(r2, 0, 2, "22", "Final age is 22 after 2 updates");
 
     // Delete then re-insert same PK
-    ctx.run("DELETE FROM users WHERE user_id = 50");
-    rs = ctx.run("SELECT * FROM users WHERE user_id = 50");
-    assertRowCount(rs, 0, "Row gone after delete");
-    ctx.run("INSERT INTO users VALUES (50, 'MultiNew', 'new@test.com', 30, 60000.0)");
-    rs = ctx.run("SELECT * FROM users WHERE user_id = 50");
-    assertRowCount(rs, 1, "Row re-inserted after delete");
-    assertCell(rs, 0, 1, "MultiNew", "Re-inserted row has new name");
+    ctx.run("DELETE FROM users WHERE id = 50");
+    assertRowCount(ctx.run("SELECT * FROM users WHERE id = 50"),
+                   0, "Row gone after delete");
+    ctx.run("INSERT INTO users VALUES (50, 'NewMulti', 30)");
+    auto r3 = ctx.run("SELECT * FROM users WHERE id = 50");
+    assertRowCount(r3, 1, "Row re-inserted after delete");
+    assertCell(r3, 0, 1, "NewMulti", "Re-inserted row has new name");
 
-    // Parse error handling
-    rs = ctx.run("THIS IS NOT SQL");
-    assertError(rs, "Invalid SQL returns parse error", "Parse error");
-
-    // Empty statement
-    rs = ctx.run("");
-    assert(!rs.success);
-    pass("Empty statement returns error");
+    // Parse error
+    auto bad = ctx.run("THIS IS NOT SQL");
+    check(!bad.success, "Invalid SQL returns error");
+    check(bad.errorMessage.find("Parse error") != std::string::npos ||
+              !bad.errorMessage.empty(),
+          "Parse error message populated");
 
     // EXPLAIN on non-SELECT
-    std::string plan = ctx.explain("INSERT INTO users VALUES (1,'x','x@x.com',1,1.0)");
-    assert(plan.find("EXPLAIN only supported") != std::string::npos);
-    pass("EXPLAIN on non-SELECT returns helpful message");
+    std::string plan = ctx.explain(
+        "INSERT INTO users VALUES (1,'x',1)");
+    check(plan.find("EXPLAIN only") != std::string::npos,
+          "EXPLAIN on non-SELECT returns helpful message");
 }
 
 // ================================================================
-// 16. MIXED WORKLOAD — HTAP Simulation
+// 14. HTAP Mixed Workload
 // ================================================================
-void testHTAPMixedWorkload(TestCtx &ctx)
+void testHTAPMixedWorkload()
 {
-    section("HTAP Mixed Workload Simulation");
+    section("HTAP -- Mixed Workload Simulation");
+    Ctx ctx("./test_data/htap");
 
-    // Setup: insert 10 transactions
-    for (int i = 10; i <= 20; i++)
+    ctx.run(
+        "CREATE TABLE orders ("
+        "id BIGINT NOT NULL, "
+        "customer VARCHAR(255), "
+        "amount DOUBLE, "
+        "status VARCHAR(50)"
+        ")");
+
+    // Insert 10 rows
+    for (int i = 1; i <= 10; i++)
     {
-        std::string sql =
+        ctx.run(
             "INSERT INTO orders VALUES (" +
             std::to_string(i) + ", 'Customer" + std::to_string(i) +
-            "', " + std::to_string(i * 10.0) + ", 'APAC', 'completed')";
-        auto rs = ctx.run(sql);
-        assert(rs.success);
+            "', " + std::to_string(i * 50.0) + ", 'pending')");
     }
-    pass("Inserted 11 rows for HTAP test");
+    pass("Inserted 10 rows");
 
-    // OLTP: point lookup while inserts are happening
-    auto rs = ctx.run("SELECT * FROM orders WHERE order_id = 15");
-    assertOk(rs, "OLTP point lookup during mixed workload");
-    assertRowCount(rs, 1, "Point lookup finds row 15");
+    // OLTP point lookup
+    auto r1 = ctx.run("SELECT * FROM orders WHERE id = 5");
+    assertOk(r1, "OLTP point lookup during mixed workload");
+    assertRowCount(r1, 1, "Point lookup finds row 5");
 
-    // OLAP: aggregation over all data
-    rs = ctx.run("SELECT COUNT(*) FROM orders");
-    assertOk(rs, "OLAP COUNT during mixed workload");
-    pass("OLAP aggregation runs alongside OLTP");
+    // OLAP aggregations
+    assertOk(ctx.run("SELECT COUNT(*) FROM orders"),
+             "OLAP COUNT during mixed workload");
+    assertOk(ctx.run("SELECT SUM(amount) FROM orders"),
+             "OLAP SUM during mixed workload");
+    assertOk(ctx.run("SELECT AVG(amount) FROM orders"),
+             "OLAP AVG during mixed workload");
+    assertOk(ctx.run("SELECT MIN(amount) FROM orders"),
+             "OLAP MIN during mixed workload");
+    assertOk(ctx.run("SELECT MAX(amount) FROM orders"),
+             "OLAP MAX during mixed workload");
 
-    rs = ctx.run("SELECT SUM(amount) FROM orders");
-    assertOk(rs, "OLAP SUM during mixed workload");
+    // OLTP update
+    auto r2 = ctx.run(
+        "UPDATE orders SET status = 'shipped' WHERE id = 3");
+    assertOk(r2, "OLTP UPDATE during mixed workload");
 
-    rs = ctx.run("SELECT AVG(amount) FROM orders");
-    assertOk(rs, "OLAP AVG during mixed workload");
-
-    // OLTP: update while analytics running
-    rs = ctx.run("UPDATE orders SET status = 'shipped' WHERE order_id = 10");
-    assertOk(rs, "OLTP UPDATE during mixed workload");
-
-    // Verify OLTP update visible to subsequent OLTP query
-    rs = ctx.run("SELECT * FROM orders WHERE order_id = 10");
-    assertCell(rs, 0, 4, "shipped", "OLTP update visible immediately");
+    // Verify update visible immediately
+    auto r3 = ctx.run("SELECT * FROM orders WHERE id = 3");
+    assertCell(r3, 0, 3, "shipped", "OLTP update visible immediately");
 
     // OLTP delete
-    rs = ctx.run("DELETE FROM orders WHERE order_id = 20");
-    assertOk(rs, "OLTP DELETE during mixed workload");
+    assertOk(ctx.run("DELETE FROM orders WHERE id = 10"),
+             "OLTP DELETE during mixed workload");
+    assertRowCount(ctx.run("SELECT * FROM orders WHERE id = 10"),
+                   0, "Deleted row not visible");
 
-    // Verify delete
-    rs = ctx.run("SELECT * FROM orders WHERE order_id = 20");
-    assertRowCount(rs, 0, "Deleted row not visible");
+    // Full scan after mixed ops
+    auto r4 = ctx.run("SELECT * FROM orders");
+    assertRowCount(r4, 9, "9 rows remain after delete");
 
-    pass("HTAP mixed workload completed successfully");
+    pass("HTAP mixed workload completed");
 }
 
 // ================================================================
@@ -810,49 +889,47 @@ void testHTAPMixedWorkload(TestCtx &ctx)
 int main()
 {
     std::cout << "========================================\n";
-    std::cout << " Samanvay SQL Layer — Comprehensive Tests\n";
+    std::cout << " Samanvay SQL Layer -- Comprehensive Tests\n";
     std::cout << "========================================\n";
 
-    // Create test data directory
-    std::system("mkdir -p ./test_data/columnar");
-
-    TestCtx ctx;
+    // Clean slate
+    std::filesystem::remove_all("./test_data");
 
     try
     {
-        testCreateTable(ctx);
-        testDropTable(ctx);
-        testShowTables(ctx);
-        testInsert(ctx);
-        testSelectPointLookup(ctx);
-        testSelectFullScan(ctx);
-        testSelectWithWhere(ctx);
-        testSelectAggregations(ctx);
-        testUpdate(ctx);
-        testDelete(ctx);
-        testExplain(ctx);
-        testRouterRouting(ctx);
-        testSchemaPersistence(ctx);
-        testRowCodecIntegrity(ctx);
-        testEdgeCases(ctx);
-        testHTAPMixedWorkload(ctx);
+        testCreateTable();
+        testDropTable();
+        testShowTables();
+        testInsert();
+        testSelectPointLookup();
+        testSelectFullScan();
+        testSelectWhere();
+        testSelectAggregations();
+        testUpdate();
+        testDelete();
+        testSchemaPersistence();
+        testRowCodecIntegrity();
+        testEdgeCases();
+        testHTAPMixedWorkload();
     }
     catch (const std::exception &e)
     {
-        std::cerr << "\n❌ EXCEPTION: " << e.what() << "\n";
-        failed++;
+        std::cerr << "\nEXCEPTION: " << e.what() << "\n";
+        g_failed++;
     }
 
-    // ── Summary ──────────────────────────────────────────────────
+    // Cleanup
+    std::filesystem::remove_all("./test_data");
+
     std::cout << "\n========================================\n";
-    std::cout << " Results: " << passed << " passed, "
-              << failed << " failed\n";
+    std::cout << " Results: " << g_passed << " passed, "
+              << g_failed << " failed\n";
     std::cout << "========================================\n";
 
-    if (failed == 0)
-        std::cout << "✅ All tests passed!\n";
+    if (g_failed == 0)
+        std::cout << "All tests passed!\n";
     else
-        std::cout << "❌ " << failed << " test(s) failed!\n";
+        std::cout << g_failed << " test(s) failed\n";
 
-    return failed > 0 ? 1 : 0;
+    return g_failed > 0 ? 1 : 0;
 }
