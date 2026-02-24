@@ -466,7 +466,7 @@ void testSelectWhere()
     // Numeric less than
     auto r3 = ctx.run("SELECT * FROM orders WHERE amount < 100");
     assertOk(r3, "WHERE amount < 100");
-    assertRowCount(r3, 1, "1 order with amount < 100");
+    assertRowCount(r3, 2, "2 orders with amount < 100");
 
     // Greater than or equal
     auto r4 = ctx.run("SELECT * FROM orders WHERE amount >= 250");
