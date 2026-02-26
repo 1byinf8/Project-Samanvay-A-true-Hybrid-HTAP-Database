@@ -442,10 +442,16 @@ namespace sql
                 "DELETE only supports WHERE <pk> = <value>");
 
         std::string key = SchemaRegistry::encodeKey(tableName, *pkVal);
+
+        // Check if the row exists before deleting
+        auto existing = engine_.get(key);
+        if (!existing.has_value())
+            return ResultSet::affected(0, "Row not found");
+
         bool ok = engine_.del(key);
 
         return ok ? ResultSet::affected(1)
-                  : ResultSet::affected(0, "Row not found");
+                  : ResultSet::error("Storage engine delete failed");
     }
 
     // ================================================================
@@ -574,7 +580,15 @@ namespace sql
         case hsql::kExprLiteralInt:
             return std::to_string(expr->ival);
         case hsql::kExprLiteralFloat:
-            return std::to_string(expr->fval);
+        {
+            std::string s = std::to_string(expr->fval);
+            // Strip trailing zeros: "300.000000" -> "300"
+            if (s.find('.') != std::string::npos) {
+                s.erase(s.find_last_not_of('0') + 1, std::string::npos);
+                if (s.back() == '.') s.pop_back();
+            }
+            return s;
+        }
         case hsql::kExprLiteralString:
             return expr->name ? std::string(expr->name) : "";
         case hsql::kExprLiteralNull:

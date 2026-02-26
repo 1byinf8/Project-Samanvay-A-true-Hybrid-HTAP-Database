@@ -254,12 +254,11 @@ public:
 
     rangeQueryCount_++;
 
-    // Plan the query
-    auto request = query::QueryRequest::rangeScan(startKey, endKey);
-    auto plan = queryRouter_->planQuery(request);
+    // Get memtable results first (freshly inserted, not yet flushed)
+    auto memResults = memtableManager_->rangeQuery(startKey, endKey);
 
-    // Execute using range query executor
-    return rangeQueryExecutor_->executeSSTableRange(startKey, endKey);
+    // Merge memtable + SSTable results
+    return rangeQueryExecutor_->executeWithMemtable(startKey, endKey, memResults);
   }
 
   // Execute range query with memtable results
@@ -275,7 +274,15 @@ public:
   // Full table scan
   std::vector<std::pair<std::string, std::string>> fullScan() {
     rangeQueryCount_++;
-    return rangeQueryExecutor_->fullScan();
+
+    std::string minKey = "";
+    std::string maxKey(256, '\xff');
+
+    // Get memtable results (freshly inserted, not yet flushed)
+    auto memResults = memtableManager_->rangeQuery(minKey, maxKey);
+
+    // Merge memtable + SSTable results
+    return rangeQueryExecutor_->executeWithMemtable(minKey, maxKey, memResults);
   }
 
   // ==================== Aggregations (OLAP) ====================
