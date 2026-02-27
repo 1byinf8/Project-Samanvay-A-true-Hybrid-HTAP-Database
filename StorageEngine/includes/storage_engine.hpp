@@ -287,90 +287,32 @@ public:
   // ==================== Aggregations (OLAP) ====================
 
   // Execute aggregation query on columnar data
-  // query::QueryResult executeAggregation(const query::QueryRequest &request) {
-  //   query::QueryResult result;
-  //   result.success = true;
-
-  //   // Plan the query
-  //   auto plan = queryRouter_->planQuery(request);
-
-  //   // For aggregations, we'd scan columnar files and aggregate
-  //   // This is a simplified implementation
-
-  //   auto columnarSSTables =
-  //       lsmManager_->getSSTablesForRange("", std::string(256, '\xff'));
-
-  //   result.countResult = 0;
-  //   result.sumResult = 0;
-  //   result.minResult = INT64_MAX;
-  //   result.maxResult = INT64_MIN;
-
-  //   for (const auto &meta : columnarSSTables) {
-  //     if (!meta.isColumnar)
-  //       continue;
-
-  //     // In a full implementation, would open columnar file and aggregate
-  //     result.countResult += meta.entryCount;
-  //   }
-
-  //   return result;
-  // }
-
   query::QueryResult executeAggregation(const query::QueryRequest &request) {
     query::QueryResult result;
     result.success = true;
 
-    // Pull every row from all layers (memtable + all SSTable levels)
-    // Same path as fullScan() so data at any LSM level is included
-    std::string minKey = "";
-    std::string maxKey(256, '\xff');
+    // Plan the query
+    auto plan = queryRouter_->planQuery(request);
 
-    auto memResults = memtableManager_->rangeQuery(minKey, maxKey);
-    auto allRows =
-        rangeQueryExecutor_->executeWithMemtable(minKey, maxKey, memResults);
+    // For aggregations, we'd scan columnar files and aggregate
+    // This is a simplified implementation
 
-    // Now compute the requested aggregate over the result set
-    result.countResult = static_cast<int64_t>(allRows.size());
+    auto columnarSSTables =
+        lsmManager_->getSSTablesForRange("", std::string(256, '\xff'));
+
+    result.countResult = 0;
     result.sumResult = 0;
     result.minResult = INT64_MAX;
     result.maxResult = INT64_MIN;
-    double sumForAvg = 0.0;
 
-    if (request.aggType != query::AggregationType::COUNT) {
-      for (const auto &[key, value] : allRows) {
-        // Values in your engine are stored as serialized strings by the
-        // SQL layer. The SQL layer should call this with numeric values
-        // already parsed — but as a fallback we attempt stod here.
-        double numericVal = 0.0;
-        try {
-          numericVal = std::stod(value);
-        } catch (...) {
-          continue; // skip non-numeric (shouldn't happen for valid queries)
-        }
+    for (const auto &meta : columnarSSTables) {
+      if (!meta.isColumnar)
+        continue;
 
-        int64_t intVal = static_cast<int64_t>(numericVal);
-
-        result.sumResult += intVal;
-        sumForAvg += numericVal;
-
-        if (intVal < result.minResult)
-          result.minResult = intVal;
-        if (intVal > result.maxResult)
-          result.maxResult = intVal;
-      }
+      // In a full implementation, would open columnar file and aggregate
+      result.countResult += meta.entryCount;
     }
 
-    result.avgResult = (result.countResult > 0)
-                           ? sumForAvg / static_cast<double>(result.countResult)
-                           : 0.0;
-
-    // Reset sentinel values if no rows found
-    if (result.countResult == 0) {
-      result.minResult = 0;
-      result.maxResult = 0;
-    }
-
-    rangeQueryCount_++;
     return result;
   }
 

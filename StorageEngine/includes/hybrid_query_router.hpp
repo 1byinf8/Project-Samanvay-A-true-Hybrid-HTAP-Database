@@ -207,10 +207,9 @@ public:
     case QueryType::AGGREGATION:
       // Prefer columnar for aggregations - can operate on compressed data
       plan.useColumnarPath = true;
-      plan.useRowPath = true; // Skip row store for pure aggregations // remeber
-                              // to change it to false
+      plan.useRowPath = false;  // Skip row store for pure aggregations
       plan.scanMemtable = true; // Still need fresh data
-      plan.scanRowSSTables = true;
+      plan.scanRowSSTables = false;
       plan.scanColumnarFiles = true;
 
       // Only scan columnar levels
