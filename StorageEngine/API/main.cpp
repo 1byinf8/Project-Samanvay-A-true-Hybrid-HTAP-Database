@@ -56,6 +56,7 @@ int main(int argc, char *argv[]) {
   config.walPath = dataDir + "/wal.log";
 
   storage::StorageEngine engine(config);
+  engine.recover();
   engine.recoverFromWAL();
 
   // ── Initialize SQL Layer ─────────────────────────────────────
