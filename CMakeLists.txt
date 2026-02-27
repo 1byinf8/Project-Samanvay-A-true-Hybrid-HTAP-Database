@@ -93,6 +93,23 @@ target_link_libraries(samanvay_shell
 )
 
 # ============================================================================
+# REST API Server
+# ============================================================================
+add_executable(samanvay_api
+    ${CMAKE_CURRENT_SOURCE_DIR}/StorageEngine/API/main.cpp
+)
+
+target_include_directories(samanvay_api PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/StorageEngine/third_party/cpp-httplib
+    ${CMAKE_CURRENT_SOURCE_DIR}/StorageEngine/third_party
+)
+
+target_link_libraries(samanvay_api
+    PRIVATE
+        samanvay_sql
+)
+
+# ============================================================================
 # Tests
 # ============================================================================
 option(BUILD_TESTS "Build test executables" ON)

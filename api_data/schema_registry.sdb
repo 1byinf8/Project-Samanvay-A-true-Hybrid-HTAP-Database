@@ -1,0 +1,6 @@
+TABLE users id
+COLUMN id 1 0 0
+COLUMN name 3 1 0
+COLUMN age 6 1 0
+END
+
