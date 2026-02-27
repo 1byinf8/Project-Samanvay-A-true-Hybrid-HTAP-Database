@@ -349,12 +349,19 @@ public:
   StorageEngineStats getStats() {
     StorageEngineStats stats;
 
+    // Memory / memtable stats
+    stats.memtableMemoryUsage = memtableManager_->getCurrentMemoryUsage();
+    stats.activeMemtables = memtableManager_->getActiveTableCount();
+    auto frozenTables = memtableManager_->getFrozenTables();
+    stats.frozenMemtables = frozenTables.size();
+
     // Level stats
     stats.levelStats = lsmManager_->getAllLevelStats();
     stats.totalSSTables = lsmManager_->getTotalSSTableCount();
     stats.totalSSTableBytes = lsmManager_->getTotalSize();
 
     // Operations
+    stats.totalWrites = writeCount_.load();
     stats.totalReads = readCount_.load();
     stats.totalRangeQueries = rangeQueryCount_.load();
     stats.totalCompactions = compactionScheduler_->getTotalCompactions();
