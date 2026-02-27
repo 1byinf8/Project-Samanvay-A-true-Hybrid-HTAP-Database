@@ -1,16 +1,8 @@
-TABLE sales_events id
+TABLE users id
 COLUMN id 6 0 0
-COLUMN region 3 1 0
-COLUMN category 3 1 0
-COLUMN revenue 2 1 0
-COLUMN units 6 1 0
-END
-
-TABLE inventory id
-COLUMN id 6 0 0
-COLUMN product_name 3 1 0
-COLUMN quantity 6 1 0
-COLUMN price 2 1 0
+COLUMN name 3 1 0
+COLUMN email 3 1 0
+COLUMN age 6 1 0
 END
 
 TABLE orders id
@@ -20,10 +12,27 @@ COLUMN product 3 1 0
 COLUMN amount 2 1 0
 END
 
-TABLE users id
+TABLE inventory id
 COLUMN id 6 0 0
-COLUMN name 3 1 0
-COLUMN email 3 1 0
-COLUMN age 6 1 0
+COLUMN product_name 3 1 0
+COLUMN quantity 6 1 0
+COLUMN price 2 1 0
+END
+
+TABLE transactions id
+COLUMN id 6 0 0
+COLUMN region 3 1 0
+COLUMN category 3 1 0
+COLUMN amount 2 1 0
+COLUMN units 6 1 0
+COLUMN status 3 1 0
+END
+
+TABLE sales_events id
+COLUMN id 6 0 0
+COLUMN region 3 1 0
+COLUMN category 3 1 0
+COLUMN revenue 2 1 0
+COLUMN units 6 1 0
 END
 

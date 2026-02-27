@@ -1,6 +1,6 @@
-// bulk_loader.cpp — Insert 1M rows directly via StorageEngine (no HTTP)
+// bulk_loader.cpp — Insert rows directly via StorageEngine (no HTTP)
 // Build: cmake --build build --target bulk_loader
-// Run:   ./build/bulk_loader [data_dir]
+// Run:   ./build/bulk_loader [data_dir] [row_count]
 
 #include <chrono>
 #include <cstdlib>
@@ -11,9 +11,11 @@
 #include <string>
 #include <vector>
 
-#include "StorageEngine/SQLLayer/includes/query_executor.hpp"
-#include "StorageEngine/SQLLayer/includes/schema_registry.hpp"
-#include "StorageEngine/includes/storage_engine.hpp"
+// FIX 1: Corrected include paths (file lives at StorageEngine/API/, so
+//         SQL layer and includes are one level up via "../")
+#include "../SQLLayer/includes/query_executor.hpp"
+#include "../SQLLayer/includes/schema_registry.hpp"
+#include "../includes/storage_engine.hpp"
 
 static const char *REGIONS[] = {"North", "South", "East", "West", "Central"};
 static const char *CATEGORIES[] = {"Electronics", "Software", "Hardware",
@@ -31,6 +33,12 @@ int main(int argc, char *argv[]) {
   if (argc >= 3)
     totalRows = std::atoi(argv[2]);
 
+  // Guard against nonsense row counts
+  if (totalRows <= 0) {
+    std::cerr << "ERROR: row_count must be > 0\n";
+    return 1;
+  }
+
   std::cout << "\n";
   std::cout << "========================================\n";
   std::cout << "  Samanvay Bulk Loader\n";
@@ -45,22 +53,37 @@ int main(int argc, char *argv[]) {
   config.columnarDirectory = dataDir + "/columnar";
   config.walPath = dataDir + "/wal.log";
 
+  // LSM config must mirror the data directory so generated SSTable
+  // paths land in the right place
+  config.lsmConfig.dataDirectory = dataDir;
+
   storage::StorageEngine engine(config);
-  engine.recoverFromWAL();
+
+  // FIX 2: Recover persisted LSM metadata FIRST so previously flushed
+  //        SSTables are visible, then replay WAL on top.
+  //        Original code only called recoverFromWAL() which meant any
+  //        SSTables from a prior run were completely invisible.
+  engine.recover();        // load lsm_meta.bin  (SSTable registry)
+  engine.recoverFromWAL(); // replay wal.log      (unflushed writes)
 
   sql::SchemaRegistry registry(dataDir + "/schema_registry.sdb");
   sql::QueryExecutor executor(engine, registry);
 
   // ── Create the transactions table ──────────────────────────────
   std::cout << "[1/3] Creating transactions table...\n";
-  auto createResult = executor.execute(
-      "CREATE TABLE transactions (id INT PRIMARY KEY, region VARCHAR(50), "
-      "category VARCHAR(50), amount DOUBLE, units INT, status VARCHAR(20))");
+  auto createResult = executor.execute("CREATE TABLE transactions ("
+                                       "id INT PRIMARY KEY, "
+                                       "region VARCHAR(50), "
+                                       "category VARCHAR(50), "
+                                       "amount DOUBLE, "
+                                       "units INT, "
+                                       "status VARCHAR(20))");
 
   if (createResult.success) {
-    std::cout << "  OK: Table created\n";
+    std::cout << "  OK: Table created\n\n";
   } else {
-    std::cout << "  Note: " << createResult.message << "\n";
+    // Table probably already exists from a previous run — that is fine
+    std::cout << "  Note: " << createResult.errorMessage << "\n\n";
   }
 
   // ── Bulk insert ────────────────────────────────────────────────
@@ -76,7 +99,12 @@ int main(int argc, char *argv[]) {
   auto startTime = std::chrono::steady_clock::now();
   int successCount = 0;
   int failCount = 0;
-  int progressStep = totalRows / 20; // 5% increments
+
+  // FIX 3: progressStep must be at least 1 to avoid modulo-by-zero when
+  //        totalRows < 20.  Original code: int progressStep = totalRows / 20
+  //        which is 0 for small row counts → undefined behaviour on line
+  //        "if (i % progressStep == 0)".
+  int progressStep = std::max(1, totalRows / 20); // 5% increments, min 1
 
   for (int i = 1; i <= totalRows; i++) {
     const char *region = REGIONS[regionDist(rng)];
@@ -100,19 +128,34 @@ int main(int argc, char *argv[]) {
     if (i % progressStep == 0 || i == totalRows) {
       auto now = std::chrono::steady_clock::now();
       double elapsed = std::chrono::duration<double>(now - startTime).count();
-      double rate = i / elapsed;
-      double eta = (totalRows - i) / rate;
+
+      // FIX 4: Guard against division by zero on ETA when elapsed ~ 0.
+      //        Original code computed rate = i/elapsed then eta =
+      //        remaining/rate without any protection — crashes or prints
+      //        inf/nan in the first few milliseconds.
+      double rate = (elapsed > 0.0) ? (i / elapsed) : 0.0;
+      double eta = (rate > 0.0) ? ((totalRows - i) / rate) : 0.0;
 
       std::cout << "  [" << std::setw(3) << (i * 100 / totalRows) << "%] " << i
                 << "/" << totalRows << " rows  |  " << std::fixed
-                << std::setprecision(0) << rate << " rows/sec  |  ETA "
-                << std::setprecision(1) << eta << "s\n";
+                << std::setprecision(0) << rate << " rows/sec"
+                << "  |  ETA " << std::setprecision(1) << eta << "s\n";
     }
   }
 
   auto endTime = std::chrono::steady_clock::now();
   double totalElapsed =
       std::chrono::duration<double>(endTime - startTime).count();
+
+  // FIX 5: Explicitly flush memtables to disk before printing the "done"
+  //        message so the caller can safely restart the API server immediately.
+  //        Original code relied on the StorageEngine destructor to do this
+  //        implicitly, which happens *after* main() returns — meaning the
+  //        "Data persisted" message printed below was a lie.
+  std::cout << "\n  Flushing memtables to disk...\n";
+  engine.forceFlush();
+  // Give the background flush thread a moment to finish
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
   // ── Summary ────────────────────────────────────────────────────
   std::cout << "\n[3/3] Complete!\n";
@@ -122,11 +165,11 @@ int main(int argc, char *argv[]) {
   std::cout << "  Time       : " << std::fixed << std::setprecision(2)
             << totalElapsed << " seconds\n";
   std::cout << "  Throughput : " << std::setprecision(0)
-            << (successCount / totalElapsed) << " rows/sec\n";
+            << (totalElapsed > 0.0 ? successCount / totalElapsed : 0.0)
+            << " rows/sec\n";
   std::cout << "========================================\n\n";
-
-  std::cout << "Data persisted to: " << dataDir << "\n";
-  std::cout << "Restart the API server to pick up the new data.\n\n";
+  std::cout << "Data persisted to : " << dataDir << "\n";
+  std::cout << "You can now start the API server.\n\n";
 
   return 0;
 }

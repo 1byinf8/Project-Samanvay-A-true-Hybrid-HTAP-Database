@@ -110,6 +110,18 @@ target_link_libraries(samanvay_api
 )
 
 # ============================================================================
+# Bulk Loader
+# ============================================================================
+add_executable(bulk_loader
+    ${CMAKE_CURRENT_SOURCE_DIR}/StorageEngine/API/bulk_loader.cpp
+)
+
+target_link_libraries(bulk_loader
+    PRIVATE
+        samanvay_sql
+)
+
+# ============================================================================
 # Tests
 # ============================================================================
 option(BUILD_TESTS "Build test executables" ON)
