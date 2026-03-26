@@ -6,6 +6,7 @@
 #include <iostream>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -373,6 +374,107 @@ public:
 
     rangeQueryCount_++;
     return result;
+  }
+
+  // ==================== Plan-Aware Queries ====================
+  // These methods respect the QueryPlan produced by HybridQueryRouter,
+  // only scanning the levels and sources the planner decided on.
+
+  // Plan-aware point lookup: only scans specified row levels
+  std::optional<std::string>
+  getWithPlan(const std::string &key, const query::QueryPlan &plan) {
+    readCount_++;
+
+    // Check memtable first if the plan says so
+    if (plan.scanMemtable) {
+      auto memResult = memtableManager_->search(key);
+      if (memResult.has_value())
+        return memResult;
+    }
+
+    // Build a set of allowed levels for O(1) lookup
+    std::set<int> allowedLevels(plan.rowLevelsToScan.begin(),
+                                plan.rowLevelsToScan.end());
+
+    auto sstables = lsmManager_->getSSTablesForKey(key);
+    for (const auto &meta : sstables) {
+      if (meta.isColumnar)
+        continue; // Columnar files don't support efficient point lookup
+      if (allowedLevels.find(meta.level) == allowedLevels.end())
+        continue; // Level not in plan
+
+      sstable::SSTable sst(meta.filePath);
+      if (sst.load()) {
+        auto result = sst.get(key);
+        if (result.has_value()) {
+          if (result->isDeleted)
+            return std::nullopt;
+          return result->value;
+        }
+      }
+    }
+
+    return std::nullopt;
+  }
+
+  // Plan-aware range query: respects scanMemtable + rowLevelsToScan
+  std::vector<std::pair<std::string, std::string>>
+  rangeQueryWithPlan(const std::string &startKey, const std::string &endKey,
+                     const query::QueryPlan &plan) {
+    rangeQueryCount_++;
+
+    std::vector<std::pair<std::string, std::string>> memResults;
+    if (plan.scanMemtable) {
+      memResults = memtableManager_->rangeQuery(startKey, endKey);
+    }
+
+    return rangeQueryExecutor_->executeWithMemtableAndLevels(
+        startKey, endKey, memResults, plan.scanMemtable,
+        plan.rowLevelsToScan);
+  }
+
+  // Plan-aware full scan: respects scanMemtable + rowLevelsToScan
+  std::vector<std::pair<std::string, std::string>>
+  fullScanWithPlan(const query::QueryPlan &plan) {
+    rangeQueryCount_++;
+
+    std::string minKey = "";
+    std::string maxKey(256, '\xff');
+
+    std::vector<std::pair<std::string, std::string>> memResults;
+    if (plan.scanMemtable) {
+      memResults = memtableManager_->rangeQuery(minKey, maxKey);
+    }
+
+    return rangeQueryExecutor_->executeWithMemtableAndLevels(
+        minKey, maxKey, memResults, plan.scanMemtable,
+        plan.rowLevelsToScan);
+  }
+
+  // Plan-aware aggregation: uses plan to decide sources
+  // Returns raw rows from the specified levels; math is done by SQL layer
+  std::vector<std::pair<std::string, std::string>>
+  aggregateWithPlan(const query::QueryPlan &plan) {
+    std::string minKey = "";
+    std::string maxKey(256, '\xff');
+
+    // Gather rows only from the levels the plan specifies
+    std::vector<std::pair<std::string, std::string>> memResults;
+    if (plan.scanMemtable) {
+      memResults = memtableManager_->rangeQuery(minKey, maxKey);
+    }
+
+    // Merge row-level SSTables from planned levels
+    // (combine rowLevelsToScan + columnarLevelsToScan since both may have data)
+    std::vector<int> allLevels = plan.rowLevelsToScan;
+    allLevels.insert(allLevels.end(), plan.columnarLevelsToScan.begin(),
+                     plan.columnarLevelsToScan.end());
+
+    auto allRows = rangeQueryExecutor_->executeWithMemtableAndLevels(
+        minKey, maxKey, memResults, plan.scanMemtable, allLevels);
+
+    rangeQueryCount_++;
+    return allRows;
   }
 
   // ==================== SSTable Management ====================

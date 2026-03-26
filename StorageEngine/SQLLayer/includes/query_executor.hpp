@@ -52,6 +52,11 @@ namespace sql
             const hsql::SelectStatement *stmt,
             const columnar::TableSchema &schema) const;
 
+        query::QueryRequest buildScanRequest(
+            const columnar::TableSchema &schema,
+            const hsql::Expr *whereClause,
+            const std::vector<std::string> &selectedCols = {}) const;
+
         ResultSet executePlan(
             const query::QueryRequest &request,
             const query::QueryPlan &plan,

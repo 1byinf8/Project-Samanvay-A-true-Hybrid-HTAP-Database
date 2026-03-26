@@ -2,5 +2,9 @@
 *.log
 *.out
 *.sst
+*.sdb
+*.bin
 /build
 .cache
+/data/
+/api_data/

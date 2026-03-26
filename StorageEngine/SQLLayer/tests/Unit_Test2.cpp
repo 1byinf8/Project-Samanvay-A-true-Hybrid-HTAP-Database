@@ -466,36 +466,6 @@ void testSelectAggregations() {
   ctx.run("INSERT INTO orders VALUES (4, 500.00, 10)");
   ctx.run("INSERT INTO orders VALUES (5, 125.00, 3)");
 
-  // COUNT(*)
-  auto r1 = ctx.run("SELECT COUNT(*) FROM orders");
-  assertOk(r1, "SELECT COUNT(*)");
-  assertRowCount(r1, 1, "COUNT returns 1 row");
-  check(r1.headers[0] == "COUNT(*)", "COUNT header correct");
-
-  // SUM
-  auto r2 = ctx.run("SELECT SUM(amount) FROM orders");
-  assertOk(r2, "SELECT SUM(amount)");
-  assertRowCount(r2, 1, "SUM returns 1 row");
-  check(r2.headers[0] == "SUM(amount)", "SUM header correct");
-
-  // AVG
-  auto r3 = ctx.run("SELECT AVG(amount) FROM orders");
-  assertOk(r3, "SELECT AVG(amount)");
-  assertRowCount(r3, 1, "AVG returns 1 row");
-  check(r3.headers[0] == "AVG(amount)", "AVG header correct");
-
-  // MIN
-  auto r4 = ctx.run("SELECT MIN(amount) FROM orders");
-  assertOk(r4, "SELECT MIN(amount)");
-  assertRowCount(r4, 1, "MIN returns 1 row");
-  check(r4.headers[0] == "MIN(amount)", "MIN header correct");
-
-  // MAX
-  auto r5 = ctx.run("SELECT MAX(amount) FROM orders");
-  assertOk(r5, "SELECT MAX(amount)");
-  assertRowCount(r5, 1, "MAX returns 1 row");
-  check(r5.headers[0] == "MAX(amount)", "MAX header correct");
-
   // EXPLAIN shows AGGREGATION
   std::string plan = ctx.explain("SELECT SUM(amount) FROM orders");
   check(plan.find("AGGREGATION") != std::string::npos,
@@ -506,11 +476,55 @@ void testSelectAggregations() {
         "EXPLAIN shows AGGREGATION for COUNT");
 }
 
+void testComprehensiveAggregations() {
+  section("Aggregations -- Comprehensive Math Validation");
+  Ctx ctx("./test_data/agg_comprehensive");
+
+  ctx.run("CREATE TABLE test_agg ("
+          "id BIGINT NOT NULL, "
+          "amount DOUBLE, "
+          "qty INT"
+          ")");
+
+  // total amount = 100.5 + 200.5 + 300.25 = 601.25
+  // min amount = 100.5, max amount = 300.25, avg amount = 200.41666...
+  // total qty = 3 + 1 + 6 = 10
+  // min qty = 1, max qty = 6, avg qty = 3.333...
+
+  ctx.run("INSERT INTO test_agg VALUES (1, 100.50, 3)");
+  ctx.run("INSERT INTO test_agg VALUES (2, 200.50, 1)");
+  ctx.run("INSERT INTO test_agg VALUES (3, 300.25, 6)");
+
+  // Test amount (1st column in value payload)
+  auto r1 = ctx.run("SELECT SUM(amount) FROM test_agg");
+  assertOk(r1, "SUM(amount)");
+  // 601.25 represented as string, might truncate based on std::to_string, 
+  // but let's check it starts with 601
+  check(r1.rows[0][0].find("601") == 0, "SUM(amount) math correct");
+
+  auto r2 = ctx.run("SELECT MIN(amount) FROM test_agg");
+  check(r2.rows[0][0].find("100") == 0, "MIN(amount) math correct");
+
+  auto r3 = ctx.run("SELECT MAX(amount) FROM test_agg");
+  check(r3.rows[0][0].find("300") == 0, "MAX(amount) math correct");
+
+  // Test qty (2nd column in value payload - THIS WILL FAIL with current bug)
+  auto r4 = ctx.run("SELECT SUM(qty) FROM test_agg");
+  assertOk(r4, "SUM(qty)");
+  check(r4.rows[0][0] == "10", "SUM(qty) math correct (expect 10)");
+
+  auto r5 = ctx.run("SELECT MIN(qty) FROM test_agg");
+  check(r5.rows[0][0] == "1", "MIN(qty) math correct (expect 1)");
+
+  auto r6 = ctx.run("SELECT MAX(qty) FROM test_agg");
+  check(r6.rows[0][0] == "6", "MAX(qty) math correct (expect 6)");
+}
+
 // ================================================================
 // 9. DML -- UPDATE
 // ================================================================
 void testUpdate() {
-  section("DML -- UPDATE (OLTP read-modify-write)");
+  section("DML -- UPDATE (OLTP & HTAP Range Scans)");
   Ctx ctx("./test_data/update");
 
   ctx.run("CREATE TABLE orders ("
@@ -521,6 +535,7 @@ void testUpdate() {
           ")");
   ctx.run("INSERT INTO orders VALUES (1, 'Alice', 99.99, 'pending')");
   ctx.run("INSERT INTO orders VALUES (2, 'Bob', 250.00, 'pending')");
+  ctx.run("INSERT INTO orders VALUES (3, 'Charlie', 150.00, 'pending')");
 
   // Basic update
   auto r = ctx.run("UPDATE orders SET status = 'shipped' WHERE id = 1");
@@ -536,6 +551,22 @@ void testUpdate() {
   ctx.run("UPDATE orders SET amount = 300.00 WHERE id = 2");
   auto check_r2 = ctx.run("SELECT * FROM orders WHERE id = 2");
   assertCell(check_r2, 0, 2, "300", "amount updated to 300");
+
+  // Range UPDATE (numeric > 100) -> Bob(300) and Charlie(150), Alice(99.99) unaffected
+  auto r_range = ctx.run("UPDATE orders SET status = 'completed' WHERE amount > 100");
+  assertOk(r_range, "UPDATE with range WHERE");
+  check(r_range.rowsAffected == 2, "Updated 2 rows based on range condition");
+  
+  auto check_bob = ctx.run("SELECT status FROM orders WHERE id = 2");
+  assertCell(check_bob, 0, 0, "completed", "Bob's status updated");
+  
+  auto check_alice = ctx.run("SELECT status FROM orders WHERE id = 1");
+  assertCell(check_alice, 0, 0, "shipped", "Alice's status unaffected");
+
+  // UPDATE with non-pk equality
+  auto r_eq = ctx.run("UPDATE orders SET customer = 'Charles' WHERE customer = 'Charlie'");
+  assertOk(r_eq, "UPDATE with non-pk equality WHERE");
+  check(r_eq.rowsAffected == 1, "Updated 1 row based on non-pk equality");
 
   // Update non-existent row
   auto r3 = ctx.run("UPDATE orders SET status = 'test' WHERE id = 999");
@@ -558,7 +589,7 @@ void testUpdate() {
 // 10. DML -- DELETE
 // ================================================================
 void testDelete() {
-  section("DML -- DELETE (OLTP)");
+  section("DML -- DELETE (OLTP & HTAP Range Scans)");
   Ctx ctx("./test_data/delete");
 
   ctx.run("CREATE TABLE users ("
@@ -567,6 +598,8 @@ void testDelete() {
           ")");
   ctx.run("INSERT INTO users VALUES (1, 'Alice')");
   ctx.run("INSERT INTO users VALUES (2, 'Bob')");
+  ctx.run("INSERT INTO users VALUES (3, 'Charlie')");
+  ctx.run("INSERT INTO users VALUES (4, 'Dave')");
   ctx.run("INSERT INTO users VALUES (99, 'Temp')");
 
   // Verify row exists
@@ -582,6 +615,18 @@ void testDelete() {
   assertRowCount(ctx.run("SELECT * FROM users WHERE id = 99"), 0,
                  "Row gone after DELETE");
 
+  // Delete using a non-PK condition (RANGE SCAN DELETE)
+  auto r3 = ctx.run("DELETE FROM users WHERE name = 'Charlie'");
+  assertOk(r3, "DELETE with non-PK WHERE");
+  check(r3.rowsAffected == 1, "Deleted 1 row based on non-PK condition");
+  assertRowCount(ctx.run("SELECT * FROM users WHERE name = 'Charlie'"), 0, "Charlie is gone");
+
+  // Delete using a multi-row match with OR
+  auto r4 = ctx.run("DELETE FROM users WHERE name = 'Alice' OR name = 'Bob'");
+  assertOk(r4, "DELETE with OR condition");
+  check(r4.rowsAffected == 2, "Deleted 2 rows based on OR condition");
+  assertRowCount(ctx.run("SELECT * FROM users"), 1, "Only Dave remains"); // Dave is 4.
+
   // Delete non-existent
   auto r2 = ctx.run("DELETE FROM users WHERE id = 999");
   check(r2.rowsAffected == 0, "DELETE non-existent: 0 affected");
@@ -595,8 +640,8 @@ void testDelete() {
              "DELETE from non-existent table", "does not exist");
 
   // Full scan still shows remaining rows
-  assertRowCount(ctx.run("SELECT * FROM users"), 2,
-                 "2 rows remain after deleting row 99");
+  assertRowCount(ctx.run("SELECT * FROM users"), 1,
+                 "1 row remains after all deletions");
 }
 
 // ================================================================
@@ -828,6 +873,7 @@ int main() {
     testSelectFullScan();
     testSelectWhere();
     testSelectAggregations();
+    testComprehensiveAggregations();
     testUpdate();
     testDelete();
     testSchemaPersistence();

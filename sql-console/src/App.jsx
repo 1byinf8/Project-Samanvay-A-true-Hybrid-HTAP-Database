@@ -49,21 +49,25 @@ const QUICK_QUERIES = [
     ]
   },
   {
-    group: 'DML — Insert', items: [
+    group: 'DML — Modifications', items: [
       { label: 'Insert User — Alice', sql: `INSERT INTO users VALUES (1, 'Alice', 'alice@example.com', 28)` },
       { label: 'Insert User — Bob', sql: `INSERT INTO users VALUES (2, 'Bob', 'bob@example.com', 34)` },
       { label: 'Insert User — Charlie', sql: `INSERT INTO users VALUES (3, 'Charlie', 'charlie@example.com', 22)` },
       { label: 'Insert Order #1', sql: `INSERT INTO orders VALUES (1, 1, 'Widget Pro', 29.99)` },
       { label: 'Insert Order #2', sql: `INSERT INTO orders VALUES (2, 2, 'Gadget Max', 49.99)` },
+      { label: 'Update Range (Age)', sql: `UPDATE users SET age = 30 WHERE age > 25` },
+      { label: 'Update Point (Amount)', sql: `UPDATE orders SET amount = 39.99 WHERE id = 1` },
+      { label: 'Delete User (String Match)', sql: `DELETE FROM users WHERE name = 'Bob'` },
     ]
   },
   {
-    group: 'DQL — Query', items: [
+    group: 'DQL — Analytical Queries', items: [
       { label: 'Select All Users', sql: `SELECT * FROM users` },
-      { label: 'Select with WHERE', sql: `SELECT name, email FROM users WHERE age > 25` },
-      { label: 'Count Users', sql: `SELECT COUNT(*) FROM users` },
+      { label: 'Select Multiple Columns', sql: `SELECT name, email, age FROM users WHERE age >= 25` },
       { label: 'Select All Orders', sql: `SELECT * FROM orders` },
-      { label: 'Sum Order Amounts', sql: `SELECT SUM(amount) FROM orders` },
+      { label: 'Count Rows', sql: `SELECT COUNT(*) FROM users` },
+      { label: 'Sum and Average', sql: `SELECT SUM(amount), AVG(amount) FROM orders` },
+      { label: 'Min and Max', sql: `SELECT MIN(age), MAX(age) FROM users` },
     ]
   },
 ];
