@@ -323,6 +323,23 @@ public:
     return std::nullopt;
   }
 
+  bool containsTombstone(const std::string &key) {
+    std::lock_guard<std::mutex> lock(mtx);
+    
+    // Search from newest to oldest
+    for (auto it = tables.rbegin(); it != tables.rend(); ++it) {
+      if ((*it)->state == State::FLUSHED) continue;
+      
+      // If we find a live value first, it's not shadowed by a tombstone
+      if ((*it)->get(key).has_value()) return false;
+      
+      // If we find a tombstone first, it is shadowed
+      if ((*it)->containsTombstone(key)) return true;
+    }
+    
+    return false;
+  }
+
   bool erase(const std::string &key) {
     // Log to WAL first
     writeToWAL(key, "", true);

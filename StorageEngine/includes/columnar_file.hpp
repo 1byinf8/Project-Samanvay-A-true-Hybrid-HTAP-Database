@@ -363,7 +363,7 @@ public:
 
   // Getters
   const TableSchema &getSchema() const { return schema_; }
-  size_t getNumRowGroups() const { return rowGroups_.size(); }
+  size_t getNumRowGroups() const { return isWriteMode_ ? rowGroups_.size() : header_.numRowGroups; }
   uint64_t getTotalRows() const { return header_.numRows; }
   const std::vector<RowGroupMeta> &getRowGroups() const { return rowGroups_; }
 };
