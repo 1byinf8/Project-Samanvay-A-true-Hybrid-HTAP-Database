@@ -530,12 +530,9 @@ ResultSet QueryExecutor::executeUpdate(const hsql::UpdateStatement *stmt) {
     rawRows.push_back({request.key, *existing});
   } else {
     query::QueryPlan plan = router_->planQuery(request);
-    auto allRows = engine_.fullScanWithPlan(plan);
-    std::string prefix = SchemaRegistry::tablePrefix(tableName);
-    for (const auto &[k, v] : allRows) {
-      if (k.substr(0, prefix.size()) == prefix)
-        rawRows.push_back({k, v});
-    }
+    auto allRows =
+        engine_.rangeQueryWithPlan(request.startKey, request.endKey, plan);
+    rawRows = std::move(allRows);
     rawRows = applyWhereFilter(rawRows, *schema, stmt->where);
   }
 
