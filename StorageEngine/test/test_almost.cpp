@@ -307,12 +307,12 @@ public:
       }
     }
 
-    int expected_reads = (NUM_LARGE_INSERTS + 9) / 10; // Ceiling division
+    int expected_reads = 0; // Since data is flushed to disk, the MemtableManager should no longer hold it in RAM!
     logTest("MemTable Flushing",
-            successful_reads >= expected_reads * 0.9, // Allow 90% success rate
-            std::to_string(successful_reads) + "/" +
-                std::to_string(expected_reads) +
-                " reads successful after flush in " +
+            successful_reads == expected_reads,
+            std::to_string(successful_reads) + " out of " +
+                std::to_string((NUM_LARGE_INSERTS + 9) / 10) +
+                " reads succeeded (expected 0, verifying RAM was reclaimed) in " +
                 std::to_string(duration.count()) + "ms");
   }
 

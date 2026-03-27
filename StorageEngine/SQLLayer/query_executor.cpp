@@ -124,8 +124,26 @@ QueryExecutor::buildQueryRequest(const hsql::SelectStatement *stmt,
   }
 
   if (stmt->whereClause) {
+    return buildScanRequest(schema, stmt->whereClause, selectedCols);
+  }
+
+  // FULL SCAN — no WHERE clause
+  auto req = query::QueryRequest::fullScan();
+  req.selectColumns = selectedCols;
+  return req;
+}
+
+query::QueryRequest
+QueryExecutor::buildScanRequest(const columnar::TableSchema &schema,
+                                const hsql::Expr *whereClause,
+                                const std::vector<std::string> &selectedCols) const {
+  std::string tableName = schema.tableName;
+  std::string prefix = SchemaRegistry::tablePrefix(tableName);
+  std::string endKey = prefix + std::string(256, '\xff');
+
+  if (whereClause) {
     // POINT LOOKUP — WHERE pk = value
-    auto pkVal = extractPKLookup(stmt->whereClause, schema.primaryKeyColumn);
+    auto pkVal = extractPKLookup(whereClause, schema.primaryKeyColumn);
     if (pkVal.has_value()) {
       std::string key = SchemaRegistry::encodeKey(tableName, *pkVal);
       auto req = query::QueryRequest::pointLookup(key);
@@ -134,13 +152,27 @@ QueryExecutor::buildQueryRequest(const hsql::SelectStatement *stmt,
     }
 
     // RANGE SCAN — WHERE on non-PK column
-    // Router decides row vs columnar based on estimated row count
     auto req = query::QueryRequest::rangeScan(prefix, endKey);
     req.selectColumns = selectedCols;
+
+    req.hasWhereFilter = true;
+    if (whereClause->expr &&
+        whereClause->expr->type == hsql::kExprColumnRef &&
+        whereClause->expr->name) {
+      req.filterColumn = whereClause->expr->name;
+    }
+    
+    if (whereClause->opType == hsql::kOpEquals) {
+      req.selectivityHint = 0.10;
+    } else if (whereClause->opType == hsql::kOpLess ||
+               whereClause->opType == hsql::kOpLessEq ||
+               whereClause->opType == hsql::kOpGreater ||
+               whereClause->opType == hsql::kOpGreaterEq) {
+      req.selectivityHint = 0.33;
+    }
     return req;
   }
 
-  // FULL SCAN — no WHERE clause
   auto req = query::QueryRequest::fullScan();
   req.selectColumns = selectedCols;
   return req;
@@ -164,10 +196,9 @@ ResultSet QueryExecutor::executePlan(const query::QueryRequest &request,
   }
 
   // ── POINT LOOKUP ─────────────────────────────────────────────
-  // useRowPath=true, useColumnarPath=false
-  // memtable first, then row SSTables L0-L3
+  // Plan-aware: only scans memtable + levels listed in plan.rowLevelsToScan
   if (plan.type == query::QueryType::POINT_LOOKUP) {
-    auto result = engine_.get(request.key);
+    auto result = engine_.getWithPlan(request.key, plan);
     if (!result.has_value()) {
       ResultSet rs;
       rs.headers =
@@ -177,53 +208,98 @@ ResultSet QueryExecutor::executePlan(const query::QueryRequest &request,
     return ResultFormatter::fromSingleRow(schema, *result, selectedCols);
   }
 
-  // ── AGGREGATION ──────────────────────────────────────────────
-  // useColumnarPath=true, useRowPath=false
-  // columnar files Level 4+ with pre-computed column stats
+  // ── AGGREGATION ────────────────────────────────────────────
+  // Plan-aware: only scans levels in plan.rowLevelsToScan + columnarLevelsToScan
   if (plan.type == query::QueryType::AGGREGATION) {
-    auto qResult = engine_.executeAggregation(request);
-    if (!qResult.success)
-      return ResultSet::error(qResult.errorMessage);
+    auto allRows = engine_.aggregateWithPlan(plan);
+
+    // Filter to table prefix
+    std::vector<std::pair<std::string, std::string>> tableRows;
+    for (const auto &[k, v] : allRows) {
+      if (k.substr(0, prefix.size()) == prefix)
+        tableRows.push_back({k, v});
+    }
+
+    if (stmt->whereClause)
+      tableRows = applyWhereFilter(tableRows, schema, stmt->whereClause);
+
+    query::QueryResult qResult;
+    qResult.success = true;
+    qResult.countResult = static_cast<int64_t>(tableRows.size());
+    qResult.sumResult = 0;
+    qResult.minResult = std::numeric_limits<double>::max();
+    qResult.maxResult = std::numeric_limits<double>::lowest();
+    double sumForAvg = 0.0;
+
+    if (request.aggType != query::AggregationType::COUNT) {
+      for (const auto &[key, encodedRow] : tableRows) {
+        auto valStrOpt = RowCodec::getColumnValue(encodedRow, request.columnName);
+        if (!valStrOpt) continue;
+        
+        double numericVal = 0.0;
+        try {
+          numericVal = std::stod(*valStrOpt);
+        } catch (...) {
+          continue;
+        }
+
+        qResult.sumResult += numericVal;
+        sumForAvg += numericVal;
+
+        if (numericVal < qResult.minResult)
+          qResult.minResult = numericVal;
+        if (numericVal > qResult.maxResult)
+          qResult.maxResult = numericVal;
+      }
+    }
+
+    qResult.avgResult = (qResult.countResult > 0)
+                           ? sumForAvg / static_cast<double>(qResult.countResult)
+                           : 0.0;
+
+    if (qResult.countResult == 0) {
+      qResult.minResult = 0;
+      qResult.maxResult = 0;
+    }
+
     return buildAggregationResult(request, qResult);
   }
 
-  // ── FULL SCAN ────────────────────────────────────────────────
-  // useRowPath=true AND useColumnarPath=true
-  // merges results from both row store and columnar files
+  // ── FULL SCAN ──────────────────────────────────────────────
+  // Plan-aware: only scans planned memtable + levels
   if (plan.type == query::QueryType::FULL_SCAN) {
-    std::vector<std::pair<std::string, std::string>> allRows;
+    auto allRows = engine_.fullScanWithPlan(plan);
 
-    if (plan.useRowPath) {
-      auto rowResults = engine_.fullScan();
-      for (const auto &[k, v] : rowResults) {
-        if (k.substr(0, prefix.size()) == prefix)
-          allRows.push_back({k, v});
-      }
+    // Filter to table prefix
+    std::vector<std::pair<std::string, std::string>> tableRows;
+    for (const auto &[k, v] : allRows) {
+      if (k.substr(0, prefix.size()) == prefix)
+        tableRows.push_back({k, v});
     }
 
     if (stmt->whereClause)
-      allRows = applyWhereFilter(allRows, schema, stmt->whereClause);
+      tableRows = applyWhereFilter(tableRows, schema, stmt->whereClause);
 
-    return ResultFormatter::fromScanRows(schema, allRows, selectedCols);
+    return ResultFormatter::fromScanRows(schema, tableRows, selectedCols);
   }
 
-  // ── RANGE SCAN ───────────────────────────────────────────────
-  // router decided: small (<10K) → row only, large (>10K) → both
+  // ── RANGE SCAN ─────────────────────────────────────────────
+  // Plan-aware: only scans planned levels
   if (plan.type == query::QueryType::RANGE_SCAN) {
-    std::vector<std::pair<std::string, std::string>> rangeRows;
+    auto rangeRows =
+        engine_.rangeQueryWithPlan(request.startKey, request.endKey, plan);
 
-    if (plan.useRowPath) {
-      auto rowResults = engine_.rangeQuery(request.startKey, request.endKey);
-      for (const auto &[k, v] : rowResults) {
-        if (k.substr(0, prefix.size()) == prefix)
-          rangeRows.push_back({k, v});
-      }
+    // Filter to table prefix
+    std::vector<std::pair<std::string, std::string>> tableRows;
+    for (const auto &[k, v] : rangeRows) {
+      if (k.substr(0, prefix.size()) == prefix)
+        tableRows.push_back({k, v});
     }
 
     if (stmt->whereClause)
-      rangeRows = applyWhereFilter(rangeRows, schema, stmt->whereClause);
+      tableRows = applyWhereFilter(tableRows, schema, stmt->whereClause);
 
-    return ResultFormatter::fromScanRows(schema, rangeRows, selectedCols);
+    return ResultFormatter::fromScanRows(schema, tableRows, selectedCols);
   }
 
   return ResultSet::error("Unhandled query plan type");
@@ -371,7 +447,8 @@ ResultSet QueryExecutor::executeSelect(const hsql::SelectStatement *stmt) {
 }
 
 // ================================================================
-// DML — DELETE (OLTP only — PK based)
+// ================================================================
+// DML — DELETE (HTAP: Point lookup or Range scan)
 // ================================================================
 ResultSet QueryExecutor::executeDelete(const hsql::DeleteStatement *stmt) {
   std::string tableName = stmt->tableName;
@@ -381,24 +458,49 @@ ResultSet QueryExecutor::executeDelete(const hsql::DeleteStatement *stmt) {
   if (!stmt->expr)
     return ResultSet::error("DELETE without WHERE is not supported");
 
-  auto pkVal = extractPKLookup(stmt->expr, schema->primaryKeyColumn);
-  if (!pkVal.has_value())
-    return ResultSet::error("DELETE only supports WHERE <pk> = <value>");
+  auto request = buildScanRequest(*schema, stmt->expr, {schema->primaryKeyColumn});
 
-  std::string key = SchemaRegistry::encodeKey(tableName, *pkVal);
+  // Fast path for point lookup
+  if (request.type == query::QueryType::POINT_LOOKUP) {
+    auto existing = engine_.get(request.key);
+    if (!existing.has_value())
+      return ResultSet::affected(0, "Row not found");
+    
+    bool ok = engine_.del(request.key);
+    return ok ? ResultSet::affected(1) : ResultSet::error("Storage engine write failed");
+  }
 
-  // Check if the row actually exists before writing a tombstone
-  auto existing = engine_.get(key);
-  if (!existing.has_value())
-    return ResultSet::affected(0, "Row not found");
+  // Range or Full scan
+  query::QueryPlan plan = router_->planQuery(request);
+  std::vector<std::pair<std::string, std::string>> allRows =
+      engine_.rangeQueryWithPlan(request.startKey, request.endKey, plan);
 
-  bool ok = engine_.del(key);
+  // Filter to table prefix
+  std::string prefix = SchemaRegistry::tablePrefix(tableName);
+  std::vector<std::pair<std::string, std::string>> tableRows;
+  for (const auto &[k, v] : allRows) {
+    if (k.substr(0, prefix.size()) == prefix)
+      tableRows.push_back({k, v});
+  }
 
-  return ok ? ResultSet::affected(1) : ResultSet::affected(0, "Row not found");
+  tableRows = applyWhereFilter(tableRows, *schema, stmt->expr);
+
+  if (tableRows.empty()) {
+    return ResultSet::affected(0, "0 rows matching WHERE condition");
+  }
+
+  size_t deletedCount = 0;
+  for (const auto &[k, v] : tableRows) {
+    if (engine_.del(k)) {
+      deletedCount++;
+    }
+  }
+
+  return ResultSet::affected(deletedCount);
 }
 
 // ================================================================
-// DML — UPDATE (OLTP only — read-modify-write via PK)
+// DML — UPDATE (HTAP: Point lookup or Range scan)
 // ================================================================
 ResultSet QueryExecutor::executeUpdate(const hsql::UpdateStatement *stmt) {
   std::string tableName = stmt->table->name;
@@ -408,40 +510,61 @@ ResultSet QueryExecutor::executeUpdate(const hsql::UpdateStatement *stmt) {
   if (!stmt->where)
     return ResultSet::error("UPDATE without WHERE is not supported");
 
-  auto pkVal = extractPKLookup(stmt->where, schema->primaryKeyColumn);
-  if (!pkVal.has_value())
-    return ResultSet::error("UPDATE only supports WHERE <pk> = <value>");
-
-  std::string key = SchemaRegistry::encodeKey(tableName, *pkVal);
-  auto existing = engine_.get(key);
-  if (!existing.has_value())
-    return ResultSet::affected(0, "Row not found");
-
-  auto decoded = RowCodec::decode(*existing);
-  if (!decoded.has_value())
-    return ResultSet::error("Failed to decode existing row");
-
-  Row row = *decoded;
-  for (const auto *upd : *stmt->updates) {
-    if (schema->getColumnIndex(upd->column) == -1)
-      return ResultSet::error("Unknown column '" + std::string(upd->column) +
-                              "'");
-    auto val = exprToString(upd->value);
+  // Type-check and evaluate the SET assignments early
+  std::vector<std::pair<std::string, std::string>> assignments;
+  for (const auto *update : *stmt->updates) {
+    if (schema->getColumnIndex(update->column) == -1)
+      return ResultSet::error("Unknown column '" + std::string(update->column) + "'");
+    auto val = exprToString(update->value);
     if (!val.has_value())
-      return ResultSet::error("Could not evaluate value for '" +
-                              std::string(upd->column) + "'");
-    row[upd->column] = *val;
+      return ResultSet::error("Could not evaluate value for column '" + std::string(update->column) + "'");
+    assignments.push_back({update->column, *val});
   }
 
-  std::string typeErr = RowCodec::typeCheckRow(*schema, row);
-  if (!typeErr.empty())
-    return ResultSet::error(typeErr);
+  auto request = buildScanRequest(*schema, stmt->where);
+  std::vector<std::pair<std::string, std::string>> rawRows;
 
-  std::string blob = RowCodec::encode(*schema, row);
-  bool ok = engine_.put(key, blob);
+  if (request.type == query::QueryType::POINT_LOOKUP) {
+    auto existing = engine_.get(request.key);
+    if (!existing.has_value())
+      return ResultSet::affected(0, "Row not found");
+    rawRows.push_back({request.key, *existing});
+  } else {
+    query::QueryPlan plan = router_->planQuery(request);
+    auto allRows =
+        engine_.rangeQueryWithPlan(request.startKey, request.endKey, plan);
+    rawRows = std::move(allRows);
+    rawRows = applyWhereFilter(rawRows, *schema, stmt->where);
+  }
 
-  return ok ? ResultSet::affected(1)
-            : ResultSet::error("Storage engine write failed");
+  if (rawRows.empty()) {
+    return ResultSet::affected(0, "0 rows matching WHERE condition");
+  }
+
+  size_t updatedCount = 0;
+  for (const auto &[key, blob] : rawRows) {
+    auto rowOpt = RowCodec::decode(blob);
+    if (!rowOpt.has_value())
+      return ResultSet::error("Data corruption: failed to decode row");
+    Row row = *rowOpt;
+
+    // Apply updates
+    for (const auto &[col, val] : assignments) {
+      row[col] = val;
+    }
+
+    // Type check updated row
+    std::string typeErr = RowCodec::typeCheckRow(*schema, row);
+    if (!typeErr.empty())
+      return ResultSet::error(typeErr);
+
+    std::string newBlob = RowCodec::encode(*schema, row);
+    if (engine_.put(key, newBlob)) {
+      updatedCount++;
+    }
+  }
+
+  return ResultSet::affected(updatedCount);
 }
 
 // ================================================================

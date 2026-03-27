@@ -4,6 +4,8 @@
 #define HYBRID_QUERY_ROUTER_HPP
 
 #include <functional>
+#include <limits>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -35,8 +37,14 @@ struct QueryRequest {
   AggregationType aggType;                // For aggregations
   std::vector<std::string> selectColumns; // Column projection
 
+  // Filter pushdown hints (set by SQL layer from WHERE clause)
+  std::string filterColumn;               // Column being filtered on
+  bool hasWhereFilter = false;            // True if a WHERE clause exists
+  double selectivityHint = 1.0;           // Estimated fraction of rows matching (0.0-1.0)
+
   QueryRequest()
-      : type(QueryType::POINT_LOOKUP), aggType(AggregationType::NONE) {}
+      : type(QueryType::POINT_LOOKUP), aggType(AggregationType::NONE),
+        hasWhereFilter(false), selectivityHint(1.0) {}
 
   // Builder pattern for query construction
   static QueryRequest pointLookup(const std::string &k) {
@@ -89,10 +97,15 @@ struct QueryPlan {
   std::vector<int> rowLevelsToScan;      // Which LSM levels (row)
   std::vector<int> columnarLevelsToScan; // Which LSM levels (columnar)
 
+  // Cost model output
+  size_t estimatedRows = 0;      // Planner's row count estimate
+  double estimatedCostIO = 0.0;  // Estimated I/O units (1 unit = 1 SSTable read)
+
   QueryPlan()
       : type(QueryType::POINT_LOOKUP), useColumnarPath(false), useRowPath(true),
         filterMinValue(0), filterMaxValue(0), hasFilter(false),
-        scanMemtable(true), scanRowSSTables(true), scanColumnarFiles(false) {}
+        scanMemtable(true), scanRowSSTables(true), scanColumnarFiles(false),
+        estimatedRows(0), estimatedCostIO(0.0) {}
 };
 
 // Query result structure
@@ -109,10 +122,10 @@ struct QueryResult {
 
   // For aggregations
   int64_t countResult;
-  int64_t sumResult;
+  double sumResult;
   double avgResult;
-  int64_t minResult;
-  int64_t maxResult;
+  double minResult;
+  double maxResult;
 
   // Performance metrics
   uint64_t executionTimeMs;
@@ -120,9 +133,10 @@ struct QueryResult {
   size_t bytesRead;
 
   QueryResult()
-      : success(false), found(false), countResult(0), sumResult(0),
-        avgResult(0.0), minResult(0), maxResult(0), executionTimeMs(0),
-        rowsScanned(0), bytesRead(0) {}
+      : success(false), found(false), countResult(0), sumResult(0.0),
+        avgResult(0.0), minResult(std::numeric_limits<double>::max()), 
+        maxResult(std::numeric_limits<double>::lowest()), 
+        executionTimeMs(0), rowsScanned(0), bytesRead(0) {}
 
   static QueryResult ok() {
     QueryResult r;
@@ -144,31 +158,58 @@ private:
   std::shared_ptr<lsm::LSMTreeManager> lsmManager_;
   size_t columnarThreshold_; // Rows estimate above which to prefer columnar
 
-  // Estimate row count for a range query
+  // Estimate row count for a query, accounting for key overlap across levels.
+  // Uses max-per-level instead of sum to avoid massive over-counting
+  // (since the same key can appear in multiple levels before compaction).
   size_t estimateRowCount(const QueryRequest &request) const {
     if (request.type == QueryType::POINT_LOOKUP) {
       return 1;
     }
 
-    if (request.type == QueryType::FULL_SCAN) {
-      // Sum up all entries across levels
-      size_t total = 0;
+    if (request.type == QueryType::FULL_SCAN ||
+        request.type == QueryType::AGGREGATION) {
+      // Take the max entry count across levels as a baseline
+      // (keys in higher levels are duplicates of lower-level keys)
+      size_t maxLevelEntries = 0;
+      size_t totalEntries = 0;
       auto stats = lsmManager_->getAllLevelStats();
       for (const auto &s : stats) {
-        total += s.totalEntries;
+        if (s.totalEntries > maxLevelEntries)
+          maxLevelEntries = s.totalEntries;
+        totalEntries += s.totalEntries;
       }
-      return total;
+      // Heuristic: use max(maxLevel, total/2) to balance between
+      // over-counting and under-counting
+      size_t estimate = std::max(maxLevelEntries, totalEntries / 2);
+
+      // Apply selectivity hint if a WHERE filter is present
+      if (request.hasWhereFilter && request.selectivityHint < 1.0) {
+        estimate = static_cast<size_t>(estimate * request.selectivityHint);
+      }
+      return estimate;
     }
 
     if (request.type == QueryType::RANGE_SCAN) {
-      // Get SSTables that overlap the range
       auto sstables =
           lsmManager_->getSSTablesForRange(request.startKey, request.endKey);
 
-      size_t estimate = 0;
+      // Group by level and take max to avoid over-counting overlapping keys
+      std::map<int, size_t> perLevelEntries;
       for (const auto &meta : sstables) {
-        // Simple estimate: assume uniform distribution
-        estimate += meta.entryCount;
+        perLevelEntries[meta.level] += meta.entryCount;
+      }
+      size_t maxLevel = 0;
+      size_t total = 0;
+      for (const auto &[level, count] : perLevelEntries) {
+        if (count > maxLevel)
+          maxLevel = count;
+        total += count;
+      }
+      size_t estimate = std::max(maxLevel, total / 2);
+
+      // Apply selectivity for WHERE on non-PK columns
+      if (request.hasWhereFilter && request.selectivityHint < 1.0) {
+        estimate = static_cast<size_t>(estimate * request.selectivityHint);
       }
       return estimate;
     }
@@ -188,6 +229,14 @@ public:
     plan.columnsNeeded = request.selectColumns;
 
     const auto &config = lsmManager_->getConfig();
+    size_t estRows = estimateRowCount(request);
+    plan.estimatedRows = estRows;
+
+    // Propagate filter info from request to plan
+    if (request.hasWhereFilter) {
+      plan.hasFilter = true;
+      plan.filterColumn = request.filterColumn;
+    }
 
     switch (request.type) {
     case QueryType::POINT_LOOKUP:
@@ -202,26 +251,34 @@ public:
       for (int i = 0; i < config.columnarLevelThreshold; ++i) {
         plan.rowLevelsToScan.push_back(i);
       }
+      // Cost: 1 memtable lookup + up to N SSTable lookups (bloom filter amortized)
+      plan.estimatedCostIO = 1.0 + plan.rowLevelsToScan.size() * 0.5;
       break;
 
     case QueryType::AGGREGATION:
-      // Prefer columnar for aggregations - can operate on compressed data
+      // Aggregations need ALL data — both row levels and columnar levels
       plan.useColumnarPath = true;
-      plan.useRowPath = true;   // Skip row store for pure aggregations
-      plan.scanMemtable = true; // Still need fresh data
+      plan.useRowPath = true;
+      plan.scanMemtable = true;
       plan.scanRowSSTables = true;
       plan.scanColumnarFiles = true;
 
-      // Only scan columnar levels
+      // Include row levels (L0-L3) for fresh un-compacted data
+      for (int i = 0; i < config.columnarLevelThreshold; ++i) {
+        plan.rowLevelsToScan.push_back(i);
+      }
+      // Include columnar levels (L4+) for compacted data
       for (int i = config.columnarLevelThreshold; i < config.maxLevels; ++i) {
         plan.columnarLevelsToScan.push_back(i);
       }
+      plan.estimatedCostIO = plan.rowLevelsToScan.size() +
+                             plan.columnarLevelsToScan.size() * 0.3;
       break;
 
     case QueryType::FULL_SCAN:
-      // Full scan benefits from columnar I/O efficiency
+      // Full scan needs both paths for complete data
       plan.useColumnarPath = true;
-      plan.useRowPath = true; // Need both for complete data
+      plan.useRowPath = true;
       plan.scanMemtable = true;
       plan.scanRowSSTables = true;
       plan.scanColumnarFiles = true;
@@ -233,14 +290,13 @@ public:
       for (int i = config.columnarLevelThreshold; i < config.maxLevels; ++i) {
         plan.columnarLevelsToScan.push_back(i);
       }
+      plan.estimatedCostIO = plan.rowLevelsToScan.size() +
+                             plan.columnarLevelsToScan.size();
       break;
 
     case QueryType::RANGE_SCAN:
     case QueryType::PREFIX_SCAN: {
-      // Hybrid approach based on estimated size
-      size_t estimatedRows = estimateRowCount(request);
-
-      if (estimatedRows > columnarThreshold_) {
+      if (estRows > columnarThreshold_) {
         // Large range: prefer columnar for deep levels
         plan.useColumnarPath = true;
         plan.useRowPath = true;
@@ -262,6 +318,8 @@ public:
       for (int i = 0; i < config.columnarLevelThreshold; ++i) {
         plan.rowLevelsToScan.push_back(i);
       }
+      plan.estimatedCostIO = plan.rowLevelsToScan.size() +
+                             plan.columnarLevelsToScan.size();
       break;
     }
     }
@@ -291,6 +349,12 @@ public:
       break;
     }
 
+    // Estimated rows & cost
+    explanation += "  Estimated Rows: " +
+                   std::to_string(plan.estimatedRows) + "\n";
+    explanation += "  Estimated Cost (I/O units): " +
+                   std::to_string(plan.estimatedCostIO) + "\n";
+
     explanation += "  Storage Path:\n";
     if (plan.scanMemtable) {
       explanation += "    - Memtable: YES\n";
@@ -307,6 +371,13 @@ public:
       for (int l : plan.columnarLevelsToScan) {
         explanation += std::to_string(l) + " ";
       }
+      explanation += "\n";
+    }
+
+    if (plan.hasFilter) {
+      explanation += "  Filter Pushdown: YES";
+      if (!plan.filterColumn.empty())
+        explanation += " (column: " + plan.filterColumn + ")";
       explanation += "\n";
     }
 

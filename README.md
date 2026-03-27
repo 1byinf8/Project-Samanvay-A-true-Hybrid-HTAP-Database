@@ -120,26 +120,16 @@ cmake -DCMAKE_BUILD_TYPE=Release ..
 cmake --build .
 ```
 
-### Option 2: Manual Compilation (g++/clang++)
-
-```bash
-cd /path/to/Project-Samanvay-A-true-Hybrid-HTAP-Database/StorageEngine
-
-# Compile test executables
-g++ -std=c++17 -O2 -pthread -o test_skiplist test/test_skiplist.cpp
-g++ -std=c++17 -O2 -o test_htap test/test_htap_features.cpp
-g++ -std=c++17 -O2 -pthread -o test_memtable test/test_almost.cpp
-g++ -std=c++17 -O2 -pthread -o simple_bench test/simple.cpp
-g++ -std=c++17 -O3 -pthread -o stress_test test/stress_test_benchmark.cpp
-```
-
 ### Run All Tests (Quick Validation)
 
+Make sure you have built the project with CMake first (see Option 1).
+
 ```bash
+cd build
+
 # Run all compiled tests
 ./test_skiplist         # ~2-5 seconds
 ./test_htap             # ~1-2 seconds
-./stress_skiplist       # ~30-60 seconds (1M operations)
 ./stress_test 100000 4  # Quick benchmark with 100K records, 4 threads
 ```
 
@@ -178,38 +168,8 @@ g++ -std=c++17 -O3 -pthread -o stress_test test/stress_test_benchmark.cpp
 #### Unit Tests
 
 ```bash
-# Compile
-g++ -std=c++17 -O2 -pthread -o test_skiplist test/test_skiplist.cpp
-
-# Run
+cd build
 ./test_skiplist
-```
-
-**Test Coverage:**
-| Test Name | Description |
-|-----------|-------------|
-| `testInsertAndSearch` | Basic CRUD operations |
-| `testDelete` | Deletion and tombstone handling |
-| `testDuplicates` | Duplicate key handling |
-| `testSequentialInsert/Delete` | Ordered operations |
-| `testTombstoneHandling` | Tombstone lifecycle |
-| `testSequenceNumber` | MVCC sequence tracking |
-| `testConcurrentInserts` | Multi-threaded inserts (8 threads) |
-| `testConcurrentMixed` | Mixed insert/read/delete |
-| `testHighContentionScenario` | High contention on small key set |
-| `testMemoryConsistency` | Memory ordering correctness |
-| `testRaceConditionDetection` | Concurrent insert to same key |
-| `testLargeScaleOperations` | 10K sequential operations |
-| `testHTAPMixedWorkload` | HTAP-style mixed workload |
-
-#### Stress Tests (1M Operations)
-
-```bash
-# Compile
-g++ -std=c++17 -O2 -pthread -o stress_skiplist test/stress_skiplist.cpp
-
-# Run
-./stress_skiplist
 ```
 
 **Test Coverage:**
@@ -236,10 +196,7 @@ g++ -std=c++17 -O2 -pthread -o stress_skiplist test/stress_skiplist.cpp
 #### Validation (via HTAP Test Suite)
 
 ```bash
-# Compile
-g++ -std=c++17 -O2 -o test_htap test/test_htap_features.cpp
-
-# Run
+cd build
 ./test_htap
 ```
 
@@ -513,10 +470,7 @@ Validated through SSTable range query tests and storage engine integration.
 #### Validation (Full Test Suite)
 
 ```bash
-# Compile
-g++ -std=c++17 -O2 -pthread -o test_memtable test/test_almost.cpp
-
-# Run
+cd build
 ./test_memtable
 ```
 
@@ -535,9 +489,7 @@ g++ -std=c++17 -O2 -pthread -o test_memtable test/test_almost.cpp
 #### Read-Heavy Benchmark
 
 ```bash
-# Compile
-g++ -std=c++17 -O2 -pthread -o simple_bench test/simple.cpp
-
+cd build
 # Run (preloads 10M keys, runs 50M random lookups)
 ./simple_bench
 ```
@@ -667,26 +619,19 @@ rm -f *.sst *.col *.log test_data/* benchmark_*
 
 ## Summary of Test Commands
 
-```bash
-# Navigate to StorageEngine directory
-cd /Users/1byinf8/Project-Samanvay-A-true-Hybrid-HTAP-Database/StorageEngine
+All test executions implicitly require you to be in your `build` directory after configuring CMake.
 
-# Compile all tests
-g++ -std=c++17 -O2 -pthread -o test_skiplist test/test_skiplist.cpp
-g++ -std=c++17 -O2 -pthread -o stress_skiplist test/stress_skiplist.cpp
-g++ -std=c++17 -O2 -o test_htap test/test_htap_features.cpp
-g++ -std=c++17 -O2 -pthread -o test_memtable test/test_almost.cpp
-g++ -std=c++17 -O2 -pthread -o simple_bench test/simple.cpp
-g++ -std=c++17 -O3 -pthread -o stress_test test/stress_test_benchmark.cpp
+```bash
+cd build
 
 # Quick validation (~1 min)
 ./test_skiplist && ./test_htap
 
 # Standard validation (~5 min)
-./test_skiplist && ./test_htap && ./stress_skiplist && ./stress_test 100000 4
+./test_skiplist && ./test_htap && ./stress_test 100000 4
 
 # Full validation (~15+ min)
-./test_skiplist && ./test_htap && ./stress_skiplist && \
+./test_skiplist && ./test_htap && \
 ./test_memtable && ./stress_test 1000000 8
 
 # Extended benchmark (~30+ min)

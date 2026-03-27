@@ -146,6 +146,23 @@ if(BUILD_TESTS)
         StorageEngine/SQLLayer/tests/Unit_Test2.cpp)
     target_link_libraries(Unit_Test2 PRIVATE samanvay_sql)
 
+    # ── SQL Benchmarks ───────────────────────────────────────────
+    add_executable(benchmark_htap
+        StorageEngine/test/benchmark_htap.cpp)
+    target_link_libraries(benchmark_htap PRIVATE samanvay_sql)
+    target_compile_options(benchmark_htap PRIVATE
+        $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-O3>
+        $<$<CXX_COMPILER_ID:MSVC>:/O2>
+    )
+
+    add_executable(mt_benchmark_htap
+        StorageEngine/test/mt_benchmark_htap.cpp)
+    target_link_libraries(mt_benchmark_htap PRIVATE samanvay_sql)
+    target_compile_options(mt_benchmark_htap PRIVATE
+        $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-O3>
+        $<$<CXX_COMPILER_ID:MSVC>:/O2>
+    )
+
     # Phase 1 unit tests (schema registry + row codec, no engine needed)
     add_executable(test_phase1
         StorageEngine/SQLLayer/tests/test_phase1.cpp)

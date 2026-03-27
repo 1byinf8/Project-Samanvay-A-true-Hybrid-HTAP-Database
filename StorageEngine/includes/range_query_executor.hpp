@@ -130,6 +130,66 @@ public:
     return finalResults;
   }
 
+  // Execute range query respecting a specific set of SSTable levels
+  // Only scans SSTables at levels in allowedLevels; optionally includes memtable
+  std::vector<std::pair<std::string, std::string>> executeWithMemtableAndLevels(
+      const std::string &startKey, const std::string &endKey,
+      const std::vector<std::pair<std::string, std::string>> &memtableResults,
+      bool scanMemtable, const std::vector<int> &rowLevelsToScan) {
+
+    std::map<std::string, RangeQueryResult> merged;
+
+    // Build a set for O(1) level lookup
+    std::set<int> allowedLevels(rowLevelsToScan.begin(),
+                                rowLevelsToScan.end());
+
+    auto sstables = lsmManager_->getSSTablesForRange(startKey, endKey);
+
+    for (const auto &sstMeta : sstables) {
+      // Skip SSTables not in the allowed levels
+      if (allowedLevels.find(sstMeta.level) == allowedLevels.end())
+        continue;
+
+      sstable::SSTable sst(sstMeta.filePath);
+      if (!sst.load())
+        continue;
+
+      auto results = sst.rangeQuery(startKey, endKey);
+      for (const auto &[key, entry] : results) {
+        mergeEntry(merged, key, entry.value, entry.seq, entry.isDeleted);
+      }
+    }
+
+    // Merge memtable results if requested
+    if (scanMemtable) {
+      for (const auto &[key, value] : memtableResults) {
+        mergeEntry(merged, key, value, UINT64_MAX, false);
+      }
+    }
+
+    // Convert to final result
+    std::vector<std::pair<std::string, std::string>> finalResults;
+    for (const auto &[key, result] : merged) {
+      if (!result.isDeleted) {
+        finalResults.emplace_back(key, result.value);
+      }
+    }
+
+    return finalResults;
+  }
+
+  // Full table scan restricted to specific SSTable levels
+  std::vector<std::pair<std::string, std::string>>
+  fullScanWithLevels(const std::vector<int> &rowLevelsToScan) {
+    std::string minKey = "";
+    std::string maxKey(256, '\xff');
+
+    // No memtable component — caller merges memtable separately if needed
+    std::vector<std::pair<std::string, std::string>> empty;
+    return executeWithMemtableAndLevels(minKey, maxKey, empty, false,
+                                       rowLevelsToScan);
+  }
+
   // Execute range query with tombstone tracking
   // Returns both values and tombstones for more advanced merge scenarios
   std::pair<std::vector<std::pair<std::string, std::string>>,
