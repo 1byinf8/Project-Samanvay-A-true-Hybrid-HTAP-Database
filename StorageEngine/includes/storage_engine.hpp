@@ -390,6 +390,13 @@ public:
       auto memResult = memtableManager_->search(key);
       if (memResult.has_value())
         return memResult;
+
+      // Distinguish between "not found" and "deleted" (tombstone) in memtable.
+      // If a tombstone exists for this key in the memtable, it must shadow any
+      // older values that might exist in SSTables, so we should not fall through.
+      if (memtableManager_->containsTombstone(key)) {
+        return std::nullopt;
+      }
     }
 
     // Build a set of allowed levels for O(1) lookup
