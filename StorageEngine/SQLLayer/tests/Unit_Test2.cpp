@@ -508,7 +508,7 @@ void testComprehensiveAggregations() {
   auto r3 = ctx.run("SELECT MAX(amount) FROM test_agg");
   check(r3.rows[0][0].find("300") == 0, "MAX(amount) math correct");
 
-  // Test qty (2nd column in value payload - THIS WILL FAIL with current bug)
+  // Test qty (2nd column in value payload)
   auto r4 = ctx.run("SELECT SUM(qty) FROM test_agg");
   assertOk(r4, "SUM(qty)");
   check(r4.rows[0][0] == "10", "SUM(qty) math correct (expect 10)");

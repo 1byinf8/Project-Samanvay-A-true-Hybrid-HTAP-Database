@@ -1,5 +1,8 @@
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <random>
 #include <string>
@@ -39,10 +42,8 @@ int main(int argc, char *argv[]) {
   std::cout << "CPU Cores    : " << numThreads << "\n";
   std::cout << "Phase Timing : " << TOTAL_DURATION_SEC << " seconds per test\n\n";
 
-  std::string rmCmd = "rm -rf " + DB_DIR;
-  system(rmCmd.c_str());
-  std::string mkdirCmd = "mkdir -p " + DB_DIR + "/columnar";
-  system(mkdirCmd.c_str());
+  std::filesystem::remove_all(DB_DIR);
+  std::filesystem::create_directories(DB_DIR + "/columnar");
 
   // 1. Initialize Engine & Executor
   storage::StorageEngineConfig cfg;
@@ -165,7 +166,7 @@ int main(int argc, char *argv[]) {
   runConcurrentTest("HTAP: Concurrent Filtered Range Scans (Resource Pooled)", sqlFilterAgg, olapThreads);
 
   std::cout << "Cleaning up...\n";
-  system(rmCmd.c_str());
+  std::filesystem::remove_all(DB_DIR);
   std::cout << "Done.\n";
   
   return 0;

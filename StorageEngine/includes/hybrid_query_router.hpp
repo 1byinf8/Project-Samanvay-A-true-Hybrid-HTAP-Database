@@ -4,6 +4,7 @@
 #define HYBRID_QUERY_ROUTER_HPP
 
 #include <functional>
+#include <limits>
 #include <map>
 #include <memory>
 #include <string>

@@ -1,9 +1,11 @@
 #include <chrono>
+#include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <random>
 #include <string>
-#include <vector>
 #include <unordered_map>
+#include <vector>
 
 #include "../includes/storage_engine.hpp"
 #include "../SQLLayer/includes/query_executor.hpp"
@@ -55,10 +57,8 @@ int main(int argc, char *argv[]) {
   std::cout << "Data Dir    : " << DB_DIR << "\n\n";
 
   // Clean old DB
-  std::string rmCmd = "rm -rf " + DB_DIR;
-  system(rmCmd.c_str());
-  std::string mkdirCmd = "mkdir -p " + DB_DIR + "/columnar";
-  system(mkdirCmd.c_str());
+  std::filesystem::remove_all(DB_DIR);
+  std::filesystem::create_directories(DB_DIR + "/columnar");
 
   // 1. Initialize Engine & Executor
   storage::StorageEngineConfig cfg;
@@ -152,7 +152,7 @@ int main(int argc, char *argv[]) {
             "SELECT * FROM htap_bench_table WHERE id = 50000");
 
   std::cout << "Cleaning up benchmark data...\n";
-  system(rmCmd.c_str());
+  std::filesystem::remove_all(DB_DIR);
   std::cout << "Done.\n";
   return 0;
 }

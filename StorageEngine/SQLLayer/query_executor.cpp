@@ -227,8 +227,8 @@ ResultSet QueryExecutor::executePlan(const query::QueryRequest &request,
     qResult.success = true;
     qResult.countResult = static_cast<int64_t>(tableRows.size());
     qResult.sumResult = 0;
-    qResult.minResult = INT64_MAX;
-    qResult.maxResult = INT64_MIN;
+    qResult.minResult = std::numeric_limits<double>::max();
+    qResult.maxResult = std::numeric_limits<double>::lowest();
     double sumForAvg = 0.0;
 
     if (request.aggType != query::AggregationType::COUNT) {
@@ -472,7 +472,8 @@ ResultSet QueryExecutor::executeDelete(const hsql::DeleteStatement *stmt) {
 
   // Range or Full scan
   query::QueryPlan plan = router_->planQuery(request);
-  std::vector<std::pair<std::string, std::string>> allRows = engine_.fullScanWithPlan(plan);
+  std::vector<std::pair<std::string, std::string>> allRows =
+      engine_.rangeQueryWithPlan(request.startKey, request.endKey, plan);
 
   // Filter to table prefix
   std::string prefix = SchemaRegistry::tablePrefix(tableName);
